@@ -95,11 +95,6 @@ class StorageManager:
                     ('Trayectoria balística simplificada', 'physics', 'El alcance depende de velocidad inicial, gravedad, drag y tiempo de combustión efectivo.', 'local_seed'),
                     ('Análisis de sistemas complejos', 'systems', 'Dividir el problema en subsistemas, restricciones, riesgos, verificación y experimentos acelera la investigación seria.', 'local_seed'),
                     ('Ingeniería de misión', 'mission', 'Un diseño de misión debe separar factibilidad física, coste energético, seguridad, materiales y operaciones.', 'local_seed'),
-                    ('Modelado matemático', 'math', 'Todo problema complejo mejora si se formula con variables, restricciones, supuestos y ecuaciones verificables.', 'local_seed'),
-                    ('Análisis geopolítico', 'geopolitics', 'La geopolítica exige evaluar actores, incentivos, capacidades, riesgos, alianzas y consecuencias de segundo orden.', 'local_seed'),
-                    ('Economía aplicada', 'economics', 'Las decisiones económicas deben ponderar incentivos, costes de oportunidad, elasticidades y efectos sistémicos.', 'local_seed'),
-                    ('Biología y medicina', 'biology', 'Las hipótesis biológicas deben contrastarse con mecanismos causales, evidencia empírica y límites éticos.', 'local_seed'),
-                    ('Arquitectura de software', 'computing', 'Un sistema robusto requiere modularidad, observabilidad, tolerancia a fallos y ciclos de validación continua.', 'local_seed'),
                 ]
                 conn.executemany(
                     'INSERT INTO knowledge_documents(title, category, content, source, created_at) VALUES (?, ?, ?, ?, ?)',

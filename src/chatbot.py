@@ -70,58 +70,6 @@ class ChatbotInterface:
     def _progress(self, run_id: str, progress: float) -> None:
         self.logger.info('Progreso %s: %.1f%%', run_id, progress * 100)
 
-    def _profile_question(self, question: str, external_domains: list[str]) -> dict[str, Any]:
-        lowered = question.lower()
-        problem_type = 'general_research'
-        if any(word in lowered for word in ['crear', 'design', 'diseñar', 'build', 'sistema', 'nave', 'cohete', 'reactor']):
-            problem_type = 'design_problem'
-        elif any(word in lowered for word in ['resolver', 'equation', 'ecuación', 'derivar', 'integral', 'calcula']):
-            problem_type = 'math_or_science_problem'
-        elif any(word in lowered for word in ['geopol', 'guerra', 'conflicto', 'país', 'elección', 'presidente']):
-            problem_type = 'geopolitical_analysis'
-        requires_simulation = bool(self.ENGINEERING_DOMAINS.intersection(external_domains)) or problem_type in {'design_problem', 'math_or_science_problem'}
-        return {
-            'problem_type': problem_type,
-            'domains': external_domains,
-            'requires_simulation': requires_simulation,
-        }
-
-    def _build_general_analysis_frame(self, question: str, profile: dict[str, Any], knowledge_summary: str, external: dict[str, Any]) -> dict[str, Any]:
-        synthesis = external.get('synthesis', {})
-        domains = profile.get('domains', []) or ['general']
-        analytical_depth = max(1.0, float(len(domains)) * 1.4 + float(external.get('queries_executed', 0)) * 0.08)
-        uncertainty = max(0.05, 1.0 - float(synthesis.get('quality_score', 0.0)))
-        breadth = max(1.0, len(external.get('intents', [])) + len(domains) * 0.5)
-        mode = 'general_analysis'
-        return {
-            'mode': mode,
-            'run_id': f'analysis_{uuid.uuid5(uuid.NAMESPACE_DNS, question).hex[:12]}',
-            'problem_type': profile.get('problem_type', 'general_research'),
-            'domains': domains,
-            'analytical_depth': round(analytical_depth, 3),
-            'uncertainty_index': round(uncertainty, 4),
-            'breadth_score': round(breadth, 3),
-            'questions_to_validate': synthesis.get('research_gaps', [])[:5],
-            'decision_axes': domains[:6],
-            'knowledge_summary': knowledge_summary,
-            'delta_v_m_s': round(analytical_depth * 100, 3),
-            'max_altitude_m': round(breadth * 100, 3),
-            'burn_time_s': round(max(1.0, analytical_depth * 2.5), 3),
-            'payload_mass_kg': round(max(1.0, uncertainty * 100), 3),
-            'chemistry': {
-                'estimated_efficiency': round(max(0.2, 1.0 - uncertainty * 0.5), 4),
-            },
-            'range_m': round(breadth * analytical_depth * 12, 3),
-            'final_velocity_m_s': round(analytical_depth * 18, 3),
-            'remaining_fuel_kg': 0.0,
-            'resource_profile': {
-                'chunk_size': 'analysis',
-                'max_memory_mb': CONFIG.max_task_memory_mb,
-                'resumed_from_checkpoint': False,
-            },
-            'history': [],
-        }
-
     def _build_analysis(
         self,
         knowledge_summary: str,
@@ -129,18 +77,24 @@ class ChatbotInterface:
         external: dict[str, Any],
         recent_context: list[dict[str, Any]],
         ml_result,
-        profile: dict[str, Any],
     ) -> tuple[str, str]:
         context_hint = ''
         if recent_context:
             context_hint = f" El historial reciente contiene {len(recent_context)} intercambios y se usó para mantener continuidad temática sin exponer pasos internos."
         synthesis = external.get('synthesis', {})
         analysis = (
-            'Se combinó recuperación local de conocimiento científico, una capa de investigación web multi-fuente con planificación por dominios, '
-            'evaluación de evidencia, detección básica de contradicciones, conectividad reforzada con reintentos y un modelo de aprendizaje online dedicado al programa. '
-            f" La consulta fue clasificada como {profile.get('problem_type', 'general_research')} y se analizaron los dominios {', '.join(profile.get('domains', [])[:6]) or 'generales'}."
+            'Se combinó recuperación local de conocimiento científico, una simulación silenciosa de ascenso y trayectoria simplificada, '
+            'estimaciones básicas de gravedad, arrastre, propulsión y termodinámica, además de una capa de aprendizaje incremental con checkpoints persistentes. '
+            'La consulta activó una investigación web multi-fuente con planificación por dominios, evaluación de evidencia, detección básica de contradicciones, conectividad reforzada con reintentos y priorización adaptativa de fuentes.'
             f' Resumen RAG: {knowledge_summary}.{context_hint}'
+            f" La corrida activa {simulation['run_id']} se ejecutó en bloques pequeños para respetar límites de memoria de Termux."
             f" El apoyo externo terminó con estado {external['status']} tras {external.get('queries_executed', 0)} búsquedas, una señal de factibilidad aproximada de {synthesis.get('feasibility_signal', 0.0)}, una calidad media de evidencia de {synthesis.get('quality_score', 0.0)} y un mapa de conectividad por fuente para endurecer futuras consultas."
+        )
+        conclusions = (
+            f"Para esta consulta, el diseño analizado alcanza aproximadamente {simulation['max_altitude_m']} m de altitud máxima con un delta-v de {simulation['delta_v_m_s']} m/s. "
+            f"El motor de investigación recomienda trabajar por dominios {', '.join(external.get('domains', [])[:5]) or 'generales'} y priorizar fuentes {', '.join(ml_result.preferred_domains[:4])}. "
+            f"La siguiente mejora más prometedora es convertir los hallazgos externos y los riesgos detectados en requisitos cuantitativos para nuevas simulaciones y validaciones. "
+            'Los resultados son útiles para exploración conceptual avanzada, pero no sustituyen validación de ingeniería de alta fidelidad ni garantizan éxito real del 100 %.'
         )
         if simulation.get('mode') == 'general_analysis':
             conclusions = (
@@ -201,9 +155,6 @@ class ChatbotInterface:
             optimization = optimization_future.result()
 
         external = external_future.result()
-        if not profile['requires_simulation']:
-            simulation = self._build_general_analysis_frame(question, profile, knowledge.summary, external)
-            ml_result = self.ml_model.predict(simulation)
         self.storage.save_research_session(
             question,
             json.dumps(external, ensure_ascii=False),
@@ -212,6 +163,7 @@ class ChatbotInterface:
         )
 
         analysis, conclusions = self._build_analysis(knowledge.summary, simulation, external, recent_context, ml_result, profile)
+        analysis, conclusions = self._build_analysis(knowledge.summary, simulation, external, recent_context, ml_result)
         analysis = sanitize_text(analysis + self._resume_note())
         payload = {
             'analysis': analysis,

@@ -30,13 +30,6 @@ class ExternalKnowledgeFetcher:
         'materials': ['material', 'estructura', 'aleacion', 'thermal', 'heat shield', 'fatiga', 'composite'],
         'systems': ['control', 'guidance', 'navigation', 'mission', 'safety', 'riesgo', 'operations'],
         'ocean': ['oceano', 'mar', 'submar', 'underwater', 'ocean'],
-        'math': ['matem', 'ecuación', 'equation', 'integral', 'derivada', 'algebra', 'probabilidad', 'estadistica'],
-        'geopolitics': ['geopol', 'guerra', 'conflicto', 'presidente', 'estado', 'frontera', 'sancion', 'diplomac'],
-        'economics': ['econom', 'mercado', 'inflacion', 'trade', 'gdp', 'moneda', 'finanzas'],
-        'computing': ['software', 'algoritmo', 'programacion', 'machine learning', 'ia', 'python', 'código'],
-        'biology': ['biolog', 'genet', 'celula', 'evolucion', 'organismo', 'ecosistema', 'medicina'],
-        'law': ['ley', 'legal', 'constitucion', 'regulacion', 'juridic', 'tribunal'],
-        'aerospace': ['avion', 'aeronáut', 'wing', 'lift', 'aircraft', 'propulsion'],
     }
 
     def __init__(self, storage: StorageManager, timeout_sec: int = 8, max_queries: int = 18, max_retries: int = 3):
@@ -101,21 +94,13 @@ class ExternalKnowledgeFetcher:
         return matches or ['systems', 'physics']
 
     def _intents_for_domains(self, domains: list[str]) -> list[str]:
-        intents = ['overview', 'constraints', 'feasibility', 'failure_modes', 'academic', 'quantitative']
+        intents = ['overview', 'constraints', 'feasibility', 'failure_modes', 'academic']
         if 'materials' in domains:
             intents.append('materials')
         if 'chemistry' in domains:
             intents.append('propulsion')
         if 'systems' in domains:
             intents.append('architecture')
-        if 'geopolitics' in domains or 'law' in domains:
-            intents.append('policy')
-        if 'economics' in domains:
-            intents.append('market')
-        if 'biology' in domains:
-            intents.append('mechanism')
-        if 'computing' in domains:
-            intents.append('implementation')
         return intents
 
     def _health_adjusted_weights(self, source_weights: dict[str, float] | None = None) -> dict[str, float]:
@@ -158,14 +143,9 @@ class ExternalKnowledgeFetcher:
             'feasibility': f'{question} feasibility analysis {domain_head}',
             'failure_modes': f'{question} risks failure modes safety {keyword_short}',
             'academic': f'{question} research paper study {keyword_long}',
-            'quantitative': f'{question} calculations equations models quantitative analysis',
             'materials': f'{question} materials thermal loads structure',
             'propulsion': f'{question} propulsion chemistry fuel oxidizer performance',
             'architecture': f'{question} systems architecture guidance operations verification',
-            'policy': f'{question} policy regulation strategic implications',
-            'market': f'{question} economics market incentives costs tradeoffs',
-            'mechanism': f'{question} biological mechanism causal explanation evidence',
-            'implementation': f'{question} algorithm implementation architecture best practices',
         }
         tasks: list[dict[str, Any]] = []
         for intent in intents:

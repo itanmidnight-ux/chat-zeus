@@ -81,7 +81,7 @@ class ReportWriter:
             f"- Fuente destacada: {external['source']}",
             f"- Extracto útil: {external['excerpt']}",
             f"- Perfil de conectividad: {synthesis.get('connectivity_profile', {})}",
-        ])
+        ]
         if synthesis.get('contradictions'):
             lines.extend(['', 'Contradicciones o cautelas detectadas:'])
             lines.extend([f'- {item}' for item in synthesis['contradictions'][:4]])

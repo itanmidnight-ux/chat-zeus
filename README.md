@@ -132,8 +132,3 @@ El motor ya no solo “busca”: ahora intenta operar como un sistema de investi
 - y persistir sesiones de investigación para seguir mejorando el priorizado de fuentes.
 
 Aun así, ningún software serio puede prometer éxito real del 100 % en ingeniería avanzada sin experimentación, validación y revisión humana.
-
-
-### Cobertura generalista
-
-El sistema ya no está centrado solo en cohetes o física: intenta clasificar cada pregunta y responderla como problema de diseño, investigación general, matemática, geopolítica, economía, biología, computación u otros dominios. Si la consulta requiere simulación física, la activa; si no, construye un marco analítico general con ejes de decisión, vacíos de evidencia y pasos de validación.
