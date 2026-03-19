@@ -13,12 +13,11 @@ from src.core.episodic import EpisodeLearner
 from src.core.executor import TaskExecutor
 from src.core.learning import LearningEngine
 from src.core.memory import LightweightMemory
-from src.core.understanding import SemanticUnderstandingEngine
+from src.core.understanding import SemanticUnderstandingEngine, UnderstandingResult
 from src.core.verifier import VerificationEngine
 from src.engines.fact_engine import FactEngine
 from src.storage import StorageManager
 from src.utils.filters import clean_input, clean_output
-from src.utils.handlers import handle_simple_queries
 
 
 @dataclass
@@ -31,6 +30,47 @@ class AutonomousResult:
     best_solution: dict[str, Any]
     memory: dict[str, Any]
     response_text: str
+
+
+class SessionContext:
+    def __init__(self, memory_store: LightweightMemory, max_turns: int = 8):
+        self.memory_store = memory_store
+        self.max_turns = max_turns
+        self.profile: dict[str, str] = {'assistant_name': 'Chat Zeus'}
+        self.turns: list[dict[str, str]] = []
+
+    def update_from_understanding(self, understanding: UnderstandingResult) -> None:
+        for key, value in understanding.inferred_profile.items():
+            self.profile[key] = value
+            self.memory_store.put('facts', f'user_profile:{key}', {'query': key, 'value': value, 'source': 'session'})
+
+    def register_turn(self, question: str, response: str) -> None:
+        self.turns.append({'question': question, 'response': response})
+        self.turns = self.turns[-self.max_turns :]
+
+    def recall(self, question: str) -> dict[str, str]:
+        context = dict(self.profile)
+        if self.turns:
+            context['last_user_message'] = self.turns[-1]['question']
+            context['last_response'] = self.turns[-1]['response']
+        cached_name = self.memory_store.get('facts', 'user_profile:name')
+        if cached_name and 'name' not in context:
+            context['name'] = str(cached_name.get('value', ''))
+        return context
+
+
+class ClarificationEngine:
+    def needs_clarification(self, understanding: UnderstandingResult, question: str) -> str | None:
+        text = question.strip()
+        if understanding.selected_intent == 'clarification_needed' or understanding.ambiguity_score > 0.55:
+            return 'Necesito un poco más de contexto para ayudarte bien. ¿Qué objetivo exacto quieres lograr?'
+        if understanding.selected_intent == 'math' and not any(ch.isdigit() for ch in text):
+            return 'Veo una solicitud matemática, pero faltan números o una expresión concreta. ¿Cuál es la operación completa?'
+        if understanding.selected_intent == 'creation' and len(understanding.entities) < 2 and len(text.split()) < 6:
+            return 'Puedo diseñarlo, pero necesito más detalle. ¿Qué sistema quieres crear y bajo qué restricciones?'
+        if understanding.selected_intent == 'fact' and any(token in text for token in ('it', 'this', 'that', 'eso', 'esto')) and len(text.split()) < 7:
+            return '¿A qué tema u objeto te refieres exactamente?'
+        return None
 
 
 class AutonomousReasoningSystem:
@@ -47,8 +87,10 @@ class AutonomousReasoningSystem:
         self.verifier = VerificationEngine()
         self.confidence_engine = ConfidenceEngine()
         self.episode_learner = EpisodeLearner(self.storage)
+        self.session_context = SessionContext(self.memory_store)
+        self.clarifier = ClarificationEngine()
 
-    def _memory_lookup(self, understanding) -> dict[str, Any] | None:
+    def _memory_lookup(self, understanding: UnderstandingResult) -> dict[str, Any] | None:
         for bucket in ('facts', 'solutions', 'patterns'):
             hit = self.memory_store.get(bucket, understanding.normalized_question)
             if hit:
@@ -58,65 +100,58 @@ class AutonomousReasoningSystem:
             return {'bucket': 'patterns', 'value': learned.get('sample_question', ''), 'source': 'strategy'}
         return None
 
-    def _execute_plan(self, engine: str, question: str) -> tuple[str, list[str]]:
+    def _execute_plan(self, engine: str, question: str, context: dict[str, str]) -> tuple[str, list[str]]:
         sources: list[str] = []
         if engine == 'analysis':
             local_hits = self.storage.search_knowledge(question, limit=3)
             if local_hits:
                 summary = ' '.join(item['content'] for item in local_hits[:2])
                 sources.extend([str(item['source']) for item in local_hits[:2]])
-                response = self.executor.execute_task('analysis', f'{question}. contexto: {summary}')
+                response = self.executor.execute_task('analysis', f'{question}. contexto: {summary}', context=context)
                 return response, sources
-        response = self.executor.execute_task(engine, question)
+        response = self.executor.execute_task(engine, question, context=context)
         if engine == 'fact':
             cached = self.memory_store.get('facts', question)
             if cached:
                 sources.append(str(cached.get('source', 'memory')))
         return response, sources
 
-    def main_pipeline(self, question: str) -> str:
-        return self.process(question).response_text
-
     def process(self, question: str) -> AutonomousResult:
         started = time.perf_counter()
         cleaned = clean_input(question)
-        direct = handle_simple_queries(cleaned)
-        if direct:
-            response = clean_output(direct)
-            verification = self.verifier.verify(cleaned, response, source_count=1)
-            confidence = self.confidence_engine.evaluate(
-                intent_scores={'simple': 0.95},
-                selected_intent='simple',
-                verification_score=verification.score,
-                memory_hit=False,
-                source_count=1,
-                route_confidence=0.95,
-                failure_penalty=0.0,
-            )
-            best_solution = {'task': 'simple', 'proposal': response, 'final_score': verification.score, 'confidence': confidence.score}
-            self.memory_agent.remember(cleaned, best_solution, 'simple')
+        understanding = self.understanding.analyze(cleaned)
+        self.session_context.update_from_understanding(understanding)
+        context = self.session_context.recall(cleaned)
+
+        clarification = self.clarifier.needs_clarification(understanding, cleaned)
+        if clarification:
+            self.session_context.register_turn(cleaned, clarification)
             return AutonomousResult(
                 question=cleaned,
-                intent='simple',
-                tasks=['simple'],
-                plan=[{'step': 'direct_response', 'status': 'completed'}],
-                research={'used_learning': False, 'sources': ['clock']},
-                best_solution=best_solution,
+                intent='clarification_needed',
+                tasks=understanding.tasks or ['clarify'],
+                plan=[{'step': 'understand', 'status': 'completed'}, {'step': 'clarify', 'status': 'completed'}],
+                research={'used_learning': False, 'sources': [], 'requires_freshness': False},
+                best_solution={'task': 'clarification', 'proposal': clarification, 'final_score': 0.92},
                 memory=self.memory_store.export(),
-                response_text=response,
+                response_text=clarification,
             )
 
-        understanding = self.understanding.analyze(cleaned)
         memory_hit = self._memory_lookup(understanding)
         decision = self.decision_engine.decide(understanding, hot_memory=memory_hit)
         route = decision.route
-        engine = decision.engine
-        response, sources = self._execute_plan(engine, cleaned)
+        engine = 'conversation' if understanding.selected_intent == 'conversation' else decision.engine
+        response, sources = self._execute_plan(engine, cleaned, context)
         if not response and route != 'retrieve':
             response = self.learning_engine.search_and_learn(cleaned)
             sources.append('internet')
         response = clean_output(response or 'No pude completar la solicitud con suficiente confianza.')
         verification = self.verifier.verify(cleaned, response, source_count=len(sources), executed=engine == 'execution')
+        if verification.score < 0.42 and understanding.selected_intent in {'creation', 'analysis'}:
+            regenerated = self.executor.execute_task('creation', f'{cleaned}. incluye estructura y validación', context=context)
+            if regenerated:
+                response = clean_output(regenerated)
+                verification = self.verifier.verify(cleaned, response, source_count=len(sources), executed=False)
         recent_failures = self.episode_learner.recent_failures(understanding.pattern_key, limit=3)
         failure_penalty = min(0.4, len(recent_failures) * 0.08 + verification.generic_penalty)
         confidence = self.confidence_engine.evaluate(
@@ -129,9 +164,8 @@ class AutonomousReasoningSystem:
             failure_penalty=failure_penalty,
         )
         quality_score = round((verification.score * 0.55 + confidence.score * 0.45), 4)
-
-        if confidence.band in {'low', 'very_low'} and 'No pude completar' not in response:
-            response = f'{response} Confianza estimada: {confidence.band}; conviene verificar los puntos clave.'
+        if confidence.band in {'low', 'very_low'} and 'Confianza estimada' not in response:
+            response = f'{response} Confianza estimada: {confidence.band}; si es importante, conviene verificar los puntos clave.'
 
         best_solution = {
             'task': understanding.selected_intent,
@@ -141,8 +175,9 @@ class AutonomousReasoningSystem:
             'confidence': confidence.score,
             'route': route,
             'issues': verification.issues,
+            'context_profile': context,
         }
-        bucket = 'facts' if understanding.selected_intent in {'fact', 'time', 'date'} else 'solutions'
+        bucket = 'facts' if understanding.selected_intent in {'fact', 'time', 'date', 'identity', 'conversation'} else 'solutions'
         self.memory_store.put(bucket, cleaned, response, source=engine)
         self.memory_store.put('patterns', understanding.pattern_key, {
             'query': understanding.pattern_key,
@@ -152,17 +187,8 @@ class AutonomousReasoningSystem:
             'confidence': confidence.score,
         })
         if verification.issues:
-            self.memory_store.put('failures', f'{cleaned}:{route}', {
-                'query': cleaned,
-                'value': ';'.join(verification.issues),
-                'source': route,
-            })
-        self.memory_store.put('episodes', f'{cleaned}:{quality_score}', {
-            'query': cleaned,
-            'value': response[:220],
-            'source': route,
-            'score': quality_score,
-        })
+            self.memory_store.put('failures', f'{cleaned}:{route}', {'query': cleaned, 'value': ';'.join(verification.issues), 'source': route})
+        self.memory_store.put('episodes', f'{cleaned}:{quality_score}', {'query': cleaned, 'value': response[:220], 'source': route, 'score': quality_score})
         self.storage.save_learned_pattern(
             pattern_key=understanding.pattern_key,
             intent=understanding.selected_intent,
@@ -187,6 +213,7 @@ class AutonomousReasoningSystem:
             memory_hit=memory_hit is not None,
         )
         self.memory_agent.remember(cleaned, best_solution, understanding.selected_intent)
+        self.session_context.register_turn(cleaned, response)
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         for step in decision.steps:
             if step['step'] == 'execute':
@@ -199,12 +226,7 @@ class AutonomousReasoningSystem:
             intent=understanding.selected_intent,
             tasks=understanding.tasks,
             plan=decision.steps,
-            research={
-                'used_learning': route in {'retrieve', 'analyze'},
-                'sources': sources,
-                'requires_freshness': understanding.requires_freshness,
-                'confidence_band': confidence.band,
-            },
+            research={'used_learning': route in {'retrieve', 'analyze'}, 'sources': sources, 'requires_freshness': understanding.requires_freshness, 'confidence_band': confidence.band},
             best_solution=best_solution,
             memory=self.memory_store.export(),
             response_text=response,

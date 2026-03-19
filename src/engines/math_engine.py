@@ -19,6 +19,7 @@ _ALLOWED_UNARYOPS: dict[type[Any], Any] = {
     ast.UAdd: op.pos,
     ast.USub: op.neg,
 }
+_ALLOWED_CHARS = set('0123456789+-*/().% ')
 
 
 class SafeMathError(ValueError):
@@ -26,13 +27,11 @@ class SafeMathError(ValueError):
 
 
 def extract_expression(question: str) -> str:
-    match = re.search(r'([-+/*().%^0-9\s]+)', question.replace(',', '.'))
-    expression = (match.group(1) if match else question).strip()
-    expression = expression.replace('^', '**')
-    if not expression:
+    normalized = question.replace(',', '.').replace('^', '**')
+    expression = ''.join(ch if ch in _ALLOWED_CHARS else ' ' for ch in normalized)
+    expression = re.sub(r'\s+', ' ', expression).strip()
+    if not expression or not any(ch.isdigit() for ch in expression):
         raise SafeMathError('No mathematical expression found.')
-    if not re.fullmatch(r'[0-9\s+\-*/().%*]+', expression):
-        raise SafeMathError('Expression contains invalid characters.')
     return expression
 
 
