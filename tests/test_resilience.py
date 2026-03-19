@@ -1,6 +1,8 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.app import build_app
 from src.config import CONFIG
@@ -22,6 +24,26 @@ class ResourceBudgetTests(unittest.TestCase):
             request = engine.build_request('cohete de prueba', {'steps': 2000})
             self.assertEqual(request.requested_steps, 2000)
             self.assertLessEqual(request.steps, CONFIG.hard_step_cap)
+
+
+class MLBackendSafetyTests(unittest.TestCase):
+    def test_uses_heuristic_backend_by_default_without_native_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch('importlib.metadata.distribution', side_effect=AssertionError('should not probe native backends')), patch.dict(os.environ, {}, clear=False):
+            from src.ml import LightweightMLModel
+
+            storage = StorageManager(Path(tmp) / 'knowledge.sqlite3', Path(tmp) / 'checkpoints')
+            model = LightweightMLModel(storage)
+
+            self.assertEqual(model.backend, 'dedicated-online-heuristic')
+
+    def test_env_override_can_force_safe_backend_without_probings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'CHAT_ZEUS_ML_BACKEND': 'tflite_runtime'}, clear=False):
+            from src.ml import LightweightMLModel
+
+            storage = StorageManager(Path(tmp) / 'knowledge.sqlite3', Path(tmp) / 'checkpoints')
+            model = LightweightMLModel(storage)
+
+            self.assertEqual(model.backend, 'tflite_runtime')
 
 
 class ChatbotFallbackTests(unittest.TestCase):
