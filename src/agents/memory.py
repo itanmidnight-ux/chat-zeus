@@ -1,4 +1,4 @@
-"""Agente de memoria persistente y aprendizaje incremental ligero."""
+"""Memory agent with lightweight incremental learning and pattern tracking."""
 from __future__ import annotations
 
 import json
@@ -16,27 +16,33 @@ class MemoryAgent:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def load(self) -> dict[str, Any]:
-        return read_json(self.path, default={'success': [], 'failures': [], 'patterns': [], 'weights': {'feasibility': 0.4, 'efficiency': 0.25, 'safety': 0.35}})
+        return read_json(self.path, default={'success': [], 'failures': [], 'patterns': [], 'weights': {'feasibility': 0.4, 'efficiency': 0.3, 'safety': 0.3}})
+
+    def update_memory(self, result: dict[str, Any]) -> dict[str, Any]:
+        try:
+            memory = self.load()
+            score = float(result.get('final_score', result.get('score', 0.0)))
+            bucket = 'success' if score >= 0.65 else 'failures'
+            compact = {
+                'question': result.get('question', ''),
+                'task': result.get('task', 'general'),
+                'proposal': result.get('proposal', ''),
+                'score': score,
+                'intent': result.get('intent', 'analytical'),
+            }
+            memory[bucket] = (memory.get(bucket, []) + [compact])[-24:]
+            memory['patterns'] = (memory.get('patterns', []) + [{'task': compact['task'], 'intent': compact['intent'], 'score': compact['score']}])[-32:]
+            weights = memory.get('weights', {'feasibility': 0.4, 'efficiency': 0.3, 'safety': 0.3})
+            weights['feasibility'] = round(min(0.55, weights['feasibility'] + 0.005), 3)
+            weights['safety'] = round(min(0.45, weights['safety'] + (0.004 if score < 0.7 else 0.002)), 3)
+            weights['efficiency'] = round(max(0.15, 1.0 - weights['feasibility'] - weights['safety']), 3)
+            memory['weights'] = weights
+            write_json(self.path, memory)
+            self.storage.save_model_state('autonomous_reasoner_memory', memory)
+            self.storage.append_ml_observation(json.dumps({'intent': compact['intent'], 'task': compact['task']}, ensure_ascii=False), compact['score'], max(0.4, min(1.0, compact['score'])))
+            return memory
+        except Exception:
+            return self.load()
 
     def remember(self, question: str, best_solution: dict[str, Any], intent: str) -> dict[str, Any]:
-        memory = self.load()
-        record = {
-            'question': question,
-            'task': best_solution.get('task', 'general'),
-            'proposal': best_solution.get('proposal', ''),
-            'score': float(best_solution.get('final_score', best_solution.get('score', 0.0))),
-            'intent': intent,
-        }
-        bucket = 'success' if record['score'] >= 0.65 else 'failures'
-        memory[bucket] = (memory.get(bucket, []) + [record])[-24:]
-        pattern = {'task': record['task'], 'intent': intent, 'score': record['score']}
-        memory['patterns'] = (memory.get('patterns', []) + [pattern])[-32:]
-        weights = memory.get('weights', {'feasibility': 0.4, 'efficiency': 0.25, 'safety': 0.35})
-        weights['feasibility'] = round(min(0.55, weights['feasibility'] + 0.005), 3)
-        weights['safety'] = round(min(0.45, weights['safety'] + (0.004 if record['score'] < 0.7 else 0.002)), 3)
-        weights['efficiency'] = round(max(0.15, 1.0 - weights['feasibility'] - weights['safety']), 3)
-        memory['weights'] = weights
-        write_json(self.path, memory)
-        self.storage.save_model_state('autonomous_reasoner_memory', memory)
-        self.storage.append_ml_observation(json.dumps({'intent': intent, 'task': record['task']}, ensure_ascii=False), record['score'], max(0.4, min(1.0, record['score'])))
-        return memory
+        return self.update_memory({**best_solution, 'question': question, 'intent': intent})

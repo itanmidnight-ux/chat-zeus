@@ -1,20 +1,18 @@
-"""Clasificador ligero de intención."""
+"""Compatibility wrapper exposing legacy intent labels expected by existing tests."""
 from __future__ import annotations
 
-from src.utils import sanitize_text
-
+from src.utils.intent import classify_intent as _classify_intent
 
 SIMPLE = 'simple'
 EXPLICATIVE = 'explicativa'
 ANALYTICAL = 'analitica'
 
+_MAP = {
+    'simple': SIMPLE,
+    'explanatory': EXPLICATIVE,
+    'analytical': ANALYTICAL,
+}
+
 
 def classify_intent(question: str) -> str:
-    text = sanitize_text(question).lower()
-    if any(token in text for token in ('diseña', 'disena', 'analiza', 'optimiza', 'arquitectura', 'plan')):
-        return ANALYTICAL
-    if any(token in text for token in ('cómo', 'como', 'explica', 'qué es', 'que es', 'funciona')):
-        return EXPLICATIVE
-    if len(text.split()) <= 4 or any(token in text for token in ('hora', 'fecha', 'hola')):
-        return SIMPLE
-    return ANALYTICAL if len(text.split()) > 12 else EXPLICATIVE
+    return _MAP.get(_classify_intent(question), SIMPLE)

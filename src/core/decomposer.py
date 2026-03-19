@@ -1,26 +1,35 @@
-"""Descomposición ligera de problemas complejos en subproblemas accionables."""
+"""Problem decomposition into actionable subproblems."""
 from __future__ import annotations
 
-from src.utils import sanitize_text
+from src.utils.filters import clean_input
 
 _DOMAIN_MAP = {
-    'nave espacial': ['misión', 'propulsión', 'estructura', 'energía', 'materiales', 'seguridad'],
-    'cohete': ['propulsión', 'combustible', 'control', 'estructura', 'operación'],
+    'spacecraft': ['mission', 'propulsion', 'materials', 'energy', 'structure', 'safety'],
+    'nave espacial': ['misión', 'propulsión', 'materiales', 'energía', 'estructura', 'seguridad'],
+    'cohete': ['propulsión', 'combustible', 'control', 'estructura', 'seguridad'],
+    'rocket': ['propulsion', 'fuel', 'control', 'structure', 'safety'],
     'ia': ['objetivo', 'datos', 'modelo', 'evaluación', 'despliegue'],
-    'negocio': ['objetivo', 'costes', 'riesgos', 'clientes', 'operación'],
+    'ai': ['objective', 'data', 'model', 'evaluation', 'deployment'],
 }
 
 
 def decompose_problem(question: str) -> list[str]:
-    text = sanitize_text(question).lower()
-    for keyword, tasks in _DOMAIN_MAP.items():
-        if keyword in text:
-            return tasks
-    generic = []
-    if any(token in text for token in ('diseña', 'disena', 'crear', 'construir')):
-        generic.extend(['objetivo', 'restricciones', 'componentes', 'riesgos', 'validación'])
-    if any(token in text for token in ('explica', 'como', 'cómo', 'por qué', 'porque')):
-        generic.extend(['conceptos base', 'mecanismo', 'ejemplo'])
-    if any(token in text for token in ('analiza', 'optimiza', 'evalúa', 'evalua')):
-        generic.extend(['variables', 'hipótesis', 'escenarios', 'criterios'])
-    return generic or ['contexto', 'objetivo', 'restricciones', 'solución']
+    try:
+        text = clean_input(question).lower()
+        for keyword, tasks in _DOMAIN_MAP.items():
+            if keyword in text:
+                return tasks
+        generic: list[str] = []
+        if any(token in text for token in ('diseña', 'disena', 'design', 'crear', 'construir', 'build')):
+            generic.extend(['objetivo', 'restricciones', 'componentes', 'riesgos', 'validación'])
+        if any(token in text for token in ('explica', 'como', 'cómo', 'explain', 'why', 'por qué', 'porque')):
+            generic.extend(['conceptos base', 'mecanismo', 'ejemplo'])
+        if any(token in text for token in ('analiza', 'optimize', 'optimiza', 'evalúa', 'evalua', 'analyze')):
+            generic.extend(['variables', 'hipótesis', 'escenarios', 'criterios'])
+        deduped: list[str] = []
+        for item in generic or ['contexto', 'objetivo', 'restricciones', 'solución']:
+            if item not in deduped:
+                deduped.append(item)
+        return deduped
+    except Exception:
+        return ['contexto', 'objetivo', 'restricciones', 'solución']

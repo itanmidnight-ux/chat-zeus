@@ -1,20 +1,48 @@
-"""Interfaz conversacional principal orientada al sistema autónomo modular."""
+"""Main conversational interface and final answer builder."""
 from __future__ import annotations
 
 import gc
 import json
 from typing import Any
 
-from src.autonomous_system import AutonomousReasoningSystem
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.autonomous_system import AutonomousReasoningSystem
 from src.storage import StorageManager
 from src.utils import safe_error_message, sanitize_text
+from src.utils.filters import clean_output
+
+
+def build_final_answer(intent: str, best_solution: dict[str, Any]) -> str:
+    try:
+        proposal = best_solution.get('proposal', 'No se encontró una solución suficiente.')
+        task = best_solution.get('task', 'prioridad principal')
+        if intent == 'simple':
+            return clean_output(proposal).strip()[:220]
+        if intent in {'explanatory', 'explicativa'}:
+            text = (
+                f'La mejor explicación es centrarse en {task}. '
+                f'{proposal} '
+                'Primero conviene aclarar el objetivo, luego validar restricciones y finalmente elegir una opción verificable.'
+            )
+            return clean_output(text)
+        text = (
+            f'Resumen: {proposal} '
+            f'Prioridad principal: {task}. '
+            'Enfoque recomendado: dividir el trabajo, validar el riesgo crítico y avanzar por etapas seguras. '
+            'Resultado esperado: una solución factible, eficiente y segura.'
+        )
+        return clean_output(text)
+    except Exception:
+        return 'La mejor opción es avanzar con una solución simple, segura y verificable.'
 
 
 class ChatbotInterface:
     def __init__(
         self,
         storage: StorageManager,
-        autonomous_system: AutonomousReasoningSystem,
+        autonomous_system: 'AutonomousReasoningSystem',
         background_executor,
         logger,
         *_,
@@ -55,5 +83,5 @@ class ChatbotInterface:
             self.logger.exception('Error inesperado al responder')
             self.storage.log_error('chatbot', exc.__class__.__name__, str(exc), {'question': question})
             gc.collect()
-            fallback = 'No pude completar el análisis completo, pero la mejor opción es dividir el problema, validar el riesgo principal y avanzar con una solución simple.'
+            fallback = 'No pude completar el análisis, pero la mejor opción es dividir el problema, validar el riesgo principal y avanzar con una solución simple.'
             return {'response_text': sanitize_text(fallback), 'error': safe_error_message(exc)}
