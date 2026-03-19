@@ -10,7 +10,17 @@ class BackgroundExecutor:
         self.executor = ThreadPoolExecutor(max_workers=max(1, max_workers), thread_name_prefix='chat-zeus')
 
     def submit(self, fn: Callable[..., Any], *args, **kwargs) -> Future:
-        return self.executor.submit(fn, *args, **kwargs)
+        try:
+            return self.executor.submit(fn, *args, **kwargs)
+        except RuntimeError:
+            fallback_future: Future = Future()
+            try:
+                result = fn(*args, **kwargs)
+            except Exception as exc:
+                fallback_future.set_exception(exc)
+            else:
+                fallback_future.set_result(result)
+            return fallback_future
 
     def shutdown(self) -> None:
         self.executor.shutdown(wait=False, cancel_futures=False)
