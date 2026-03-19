@@ -9,10 +9,88 @@ from typing import Any
 from src.utils import read_json, utc_now_iso, write_json
 
 
+SCHEMA_SQL = '''
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    content TEXT NOT NULL,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question TEXT NOT NULL,
+    response TEXT NOT NULL,
+    context_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS simulation_runs (
+    run_id TEXT PRIMARY KEY,
+    question TEXT NOT NULL,
+    state TEXT NOT NULL,
+    progress REAL NOT NULL,
+    result_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ml_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    features_json TEXT NOT NULL,
+    target REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS research_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question TEXT NOT NULL,
+    profile_json TEXT NOT NULL,
+    findings_count INTEGER NOT NULL,
+    quality_score REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS source_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type TEXT NOT NULL,
+    usefulness REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS model_state (
+    name TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS connectivity_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    latency_ms REAL NOT NULL,
+    detail TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+'''
+
+SEED_DOCUMENTS = [
+    ('Ecuación de Tsiolkovski', 'rocketry', 'delta_v = ve * ln(m0/mf). Útil para estimar cambios de velocidad en vehículos cohete.', 'local_seed'),
+    ('Arrastre aerodinámico', 'physics', 'F_d = 0.5 * rho * Cd * A * v^2. Aproximación básica para atmósferas densas.', 'local_seed'),
+    ('Energía cinética', 'physics', 'E_k = 0.5 * m * v^2. Sirve para estimar energía asociada al movimiento.', 'local_seed'),
+    ('Gas ideal', 'thermo', 'P * V = n * R * T. Aproximación termodinámica básica para gases.', 'local_seed'),
+    ('Propulsión química', 'chemistry', 'La energía específica y la relación de mezcla afectan empuje, temperatura de cámara e impulso específico.', 'local_seed'),
+    ('Trayectoria balística simplificada', 'physics', 'El alcance depende de velocidad inicial, gravedad, drag y tiempo de combustión efectivo.', 'local_seed'),
+    ('Análisis de sistemas complejos', 'systems', 'Dividir el problema en subsistemas, restricciones, riesgos, verificación y experimentos acelera la investigación seria.', 'local_seed'),
+    ('Ingeniería de misión', 'mission', 'Un diseño de misión debe separar factibilidad física, coste energético, seguridad, materiales y operaciones.', 'local_seed'),
+    ('Cálculo diferencial', 'mathematics', 'd/dx(x^n) = n*x^(n-1). Las derivadas ayudan a analizar tasas de cambio, optimización y sensibilidad.', 'local_seed'),
+    ('Álgebra lineal', 'mathematics', 'det(A) permite evaluar invertibilidad; A^-1 existe si det(A) != 0. Las matrices modelan sistemas y transformaciones.', 'local_seed'),
+    ('Litostática básica', 'geology', 'sigma = rho * g * h aproxima la presión litostática de una columna geológica.', 'local_seed'),
+    ('Patente técnica - motor cohete', 'patent', 'Las patentes describen configuraciones, materiales, cámaras y toberas útiles para recuperar restricciones de diseño.', 'local_seed'),
+    ('Resistencia de materiales', 'materials', 'esfuerzo = fuerza / area. El factor de seguridad compara resistencia del material frente al esfuerzo aplicado.', 'local_seed'),
+]
+
+
 class StorageManager:
     def __init__(self, db_path: Path, checkpoint_dir: Path):
         self.db_path = db_path
         self.checkpoint_dir = checkpoint_dir
+        self._journal_mode = 'WAL'
+        self._temp_store = 'FILE'
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -20,95 +98,43 @@ class StorageManager:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        conn.execute('PRAGMA journal_mode=WAL')
+        try:
+            conn.execute(f'PRAGMA journal_mode={self._journal_mode}')
+        except sqlite3.OperationalError:
+            self._journal_mode = 'DELETE'
+            conn.execute(f'PRAGMA journal_mode={self._journal_mode}')
         conn.execute('PRAGMA synchronous=NORMAL')
-        conn.execute('PRAGMA temp_store=FILE')
+        try:
+            conn.execute(f'PRAGMA temp_store={self._temp_store}')
+        except sqlite3.OperationalError:
+            self._temp_store = 'MEMORY'
+            conn.execute(f'PRAGMA temp_store={self._temp_store}')
         conn.execute('PRAGMA cache_size=-2048')
         return conn
 
-    def _init_db(self) -> None:
+    def _seed_documents(self, conn: sqlite3.Connection) -> None:
+        seed_count = conn.execute('SELECT COUNT(*) FROM knowledge_documents').fetchone()[0]
+        if seed_count:
+            return
+        conn.executemany(
+            'INSERT INTO knowledge_documents(title, category, content, source, created_at) VALUES (?, ?, ?, ?, ?)',
+            [(title, category, content, source, utc_now_iso()) for title, category, content, source in SEED_DOCUMENTS],
+        )
+
+    def _initialize_schema(self) -> None:
         with self._connect() as conn:
-            conn.executescript(
-                '''
-                CREATE TABLE IF NOT EXISTS knowledge_documents (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS conversations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    question TEXT NOT NULL,
-                    response TEXT NOT NULL,
-                    context_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS simulation_runs (
-                    run_id TEXT PRIMARY KEY,
-                    question TEXT NOT NULL,
-                    state TEXT NOT NULL,
-                    progress REAL NOT NULL,
-                    result_json TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS ml_observations (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    features_json TEXT NOT NULL,
-                    target REAL NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS research_sessions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    question TEXT NOT NULL,
-                    profile_json TEXT NOT NULL,
-                    findings_count INTEGER NOT NULL,
-                    quality_score REAL NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS source_feedback (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_type TEXT NOT NULL,
-                    usefulness REAL NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS model_state (
-                    name TEXT PRIMARY KEY,
-                    state_json TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS connectivity_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_type TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    latency_ms REAL NOT NULL,
-                    detail TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                '''
-            )
-            seed_count = conn.execute('SELECT COUNT(*) FROM knowledge_documents').fetchone()[0]
-            if seed_count == 0:
-                docs = [
-                    ('Ecuación de Tsiolkovski', 'rocketry', 'delta_v = ve * ln(m0/mf). Útil para estimar cambios de velocidad en vehículos cohete.', 'local_seed'),
-                    ('Arrastre aerodinámico', 'physics', 'F_d = 0.5 * rho * Cd * A * v^2. Aproximación básica para atmósferas densas.', 'local_seed'),
-                    ('Energía cinética', 'physics', 'E_k = 0.5 * m * v^2. Sirve para estimar energía asociada al movimiento.', 'local_seed'),
-                    ('Gas ideal', 'thermo', 'P * V = n * R * T. Aproximación termodinámica básica para gases.', 'local_seed'),
-                    ('Propulsión química', 'chemistry', 'La energía específica y la relación de mezcla afectan empuje, temperatura de cámara e impulso específico.', 'local_seed'),
-                    ('Trayectoria balística simplificada', 'physics', 'El alcance depende de velocidad inicial, gravedad, drag y tiempo de combustión efectivo.', 'local_seed'),
-                    ('Análisis de sistemas complejos', 'systems', 'Dividir el problema en subsistemas, restricciones, riesgos, verificación y experimentos acelera la investigación seria.', 'local_seed'),
-                    ('Ingeniería de misión', 'mission', 'Un diseño de misión debe separar factibilidad física, coste energético, seguridad, materiales y operaciones.', 'local_seed'),
-                    ('Cálculo diferencial', 'mathematics', 'd/dx(x^n) = n*x^(n-1). Las derivadas ayudan a analizar tasas de cambio, optimización y sensibilidad.', 'local_seed'),
-                    ('Álgebra lineal', 'mathematics', 'det(A) permite evaluar invertibilidad; A^-1 existe si det(A) != 0. Las matrices modelan sistemas y transformaciones.', 'local_seed'),
-                    ('Litostática básica', 'geology', 'sigma = rho * g * h aproxima la presión litostática de una columna geológica.', 'local_seed'),
-                    ('Patente técnica - motor cohete', 'patent', 'Las patentes describen configuraciones, materiales, cámaras y toberas útiles para recuperar restricciones de diseño.', 'local_seed'),
-                    ('Resistencia de materiales', 'materials', 'esfuerzo = fuerza / area. El factor de seguridad compara resistencia del material frente al esfuerzo aplicado.', 'local_seed'),
-                ]
-                conn.executemany(
-                    'INSERT INTO knowledge_documents(title, category, content, source, created_at) VALUES (?, ?, ?, ?, ?)',
-                    [(title, category, content, source, utc_now_iso()) for title, category, content, source in docs],
-                )
+            conn.executescript(SCHEMA_SQL)
+            self._seed_documents(conn)
+
+    def _init_db(self) -> None:
+        try:
+            self._initialize_schema()
+        except sqlite3.OperationalError as exc:
+            if 'disk i/o error' not in str(exc).lower() or (self._journal_mode == 'DELETE' and self._temp_store == 'MEMORY'):
+                raise
+            self._journal_mode = 'DELETE'
+            self._temp_store = 'MEMORY'
+            self._initialize_schema()
 
     def search_knowledge(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         keywords = [word.strip().lower() for word in query.split() if len(word.strip()) > 2][:8]
