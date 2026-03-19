@@ -109,9 +109,6 @@ def summarize_intelligently(data: Any, level: str) -> str:
 
 
 def _build_simple_response(question: str, analysis_data: dict[str, Any]) -> str:
-    lowered = question.lower()
-    if 'hora' in lowered:
-        return 'No tengo reloj en tiempo real aquí, pero puedo ayudarte a calcular la hora si me indicas tu zona horaria.'
     direct_answer = analysis_data.get('direct_answer') or analysis_data.get('summary') or analysis_data.get('conclusions') or analysis_data.get('analysis')
     return summarize_intelligently({'summary': direct_answer}, QUESTION_TYPE_SIMPLE)
 

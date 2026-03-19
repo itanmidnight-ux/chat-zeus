@@ -38,7 +38,7 @@ class ResponseControlTests(unittest.TestCase):
 
         self.assertEqual(level, 'simple')
         self.assertLessEqual(len(response.splitlines()), 2)
-        self.assertIn('zona horaria', response)
+        self.assertIn('Son las', response)
 
     def test_summarize_intelligently_reduces_redundancy(self) -> None:
         summary = summarize_intelligently(
