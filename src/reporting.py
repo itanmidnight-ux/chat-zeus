@@ -23,6 +23,7 @@ class ReportWriter:
         ml = payload['ml']
         external = payload['external']
         chemistry = simulation.get('chemistry', {})
+        synthesis = external.get('synthesis', {})
         lines = [
             'Análisis completo del problema:',
             payload['analysis'],
@@ -44,16 +45,39 @@ class ReportWriter:
             'Hipótesis y predicción final:',
             f"- Predicción derivada: {ml['prediction']:.3f}",
             f"- Confianza estimada: {ml['confidence']:.2f}",
+            f"- Intensidad de investigación sugerida por ML: {ml.get('research_intensity', 'n/d')} búsquedas",
+            f"- Fuentes priorizadas por ML: {', '.join(ml.get('preferred_domains', [])) or 'n/d'}",
+            f"- Pesos actuales por fuente: {ml.get('source_weights', {})}",
+            f"- Estado interno del modelo: {ml.get('model_state', {})}",
             *[f'- {item}' for item in ml['hypotheses']],
             '',
-            'Recomendaciones y conclusiones:',
-            payload['conclusions'],
-            '',
-            'Complemento externo:',
+            'Síntesis de investigación externa:',
             f"- Estado: {external['status']}",
-            f"- Fuente: {external['source']}",
+            f"- Dominios detectados: {', '.join(external.get('domains', [])) or 'n/d'}",
+            f"- Intenciones cubiertas: {', '.join(external.get('intents', [])) or 'n/d'}",
+            f"- Consultas ejecutadas: {external.get('queries_executed', 'n/d')}",
+            f"- Mezcla de fuentes: {external.get('sources_consulted', {})}",
+            f"- Factibilidad aproximada: {synthesis.get('feasibility_signal', 'n/d')}",
+            f"- Calidad media de evidencia: {synthesis.get('quality_score', 'n/d')}",
+            f"- Fuente destacada: {external['source']}",
             f"- Extracto útil: {external['excerpt']}",
+            f"- Perfil de conectividad: {synthesis.get('connectivity_profile', {})}",
         ]
+        if synthesis.get('contradictions'):
+            lines.extend(['', 'Contradicciones o cautelas detectadas:'])
+            lines.extend([f'- {item}' for item in synthesis['contradictions'][:4]])
+        if synthesis.get('research_gaps'):
+            lines.extend(['', 'Vacíos de investigación:'])
+            lines.extend([f'- {item}' for item in synthesis['research_gaps'][:5]])
+        if synthesis.get('recommended_actions'):
+            lines.extend(['', 'Siguientes acciones recomendadas:'])
+            lines.extend([f'- {item}' for item in synthesis['recommended_actions'][:5]])
+        if external.get('findings'):
+            lines.extend(['', 'Hallazgos externos priorizados:'])
+            for item in external['findings'][:6]:
+                lines.append(
+                    f"- [{item.get('source_type', 'fuente')}/{item.get('intent', 'general')}] score={item.get('score', 'n/d')} | {item.get('title')}: {item.get('snippet')} ({item.get('source')})"
+                )
         if payload.get('optimization'):
             optimization = payload['optimization']
             best_result = optimization.get('best_result', {})
@@ -66,4 +90,5 @@ class ReportWriter:
                 f"- Mejor altitud hallada: {best_result.get('max_altitude_m', 'n/d')} m",
                 f"- Mejor delta-v hallado: {best_result.get('delta_v_m_s', 'n/d')} m/s",
             ])
+        lines.extend(['', 'Recomendaciones y conclusiones:', payload['conclusions']])
         return '\n'.join(lines)
