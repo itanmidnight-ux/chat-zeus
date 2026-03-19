@@ -1,8 +1,10 @@
-"""Interfaz textual ligera y silenciosa optimizada para Termux."""
+"""Interfaz textual ligera y silenciosa optimizada para Linux y Termux."""
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+
+from src.config import CONFIG
 
 
 @dataclass
@@ -33,8 +35,8 @@ class TermuxUI:
     def render_welcome(self) -> str:
         p = self.palette
         return (
-            f"{p.bold}{p.accent}Chat Zeus Termux{p.reset}\n"
-            f"{p.subtle}Haz tu pregunta cuando quieras. Soporta análisis general, matemáticas, física, química, geología e ingeniería. Usa parámetros como payload=120 thrust=18000 y escribe 'salir' para terminar.{p.reset}"
+            f"{p.bold}{p.accent}Chat Zeus Linux{p.reset}\n"
+            f"{p.subtle}Listo para preguntas en lenguaje natural. Perfil detectado: {CONFIG.runtime_profile.cpu_count} CPU y {CONFIG.runtime_profile.total_memory_mb} MB; usa checkpoints silenciosos y muestra solo la respuesta final. Escribe 'salir' para terminar.{p.reset}"
         )
 
     def render_response(self, text: str) -> str:

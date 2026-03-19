@@ -10,7 +10,7 @@ from typing import Any
 
 from src.config import CONFIG
 from src.storage import StorageManager
-from src.utils import clamp
+from src.utils import clamp, read_json, write_json
 
 
 @dataclass
@@ -32,6 +32,7 @@ class LightweightMLModel:
     def __init__(self, storage: StorageManager):
         self.storage = storage
         self.backend = self._detect_backend()
+        self.model_state_path = CONFIG.models_dir / CONFIG.ml_checkpoint_file
         self.state = self._load_or_init_state()
 
     BACKEND_ENV_VAR = 'CHAT_ZEUS_ML_BACKEND'
@@ -65,12 +66,9 @@ class LightweightMLModel:
             return label
         return 'dedicated-online-heuristic'
 
-    def _load_or_init_state(self) -> dict[str, Any]:
-        state = self.storage.load_model_state(self.MODEL_NAME)
-        if state:
-            return state
-        state = {
-            'version': 1,
+    def _default_state(self) -> dict[str, Any]:
+        return {
+            'version': 2,
             'samples_seen': 0,
             'learning_rate': 0.015,
             'bias': 0.0,
@@ -79,7 +77,23 @@ class LightweightMLModel:
             'feature_scale': {name: 1.0 for name in self.FEATURE_NAMES},
             'loss_ema': 0.0,
         }
+
+    def _persist_state(self) -> None:
+        self.storage.save_model_state(self.MODEL_NAME, self.state)
+        write_json(self.model_state_path, self.state)
+
+    def _load_or_init_state(self) -> dict[str, Any]:
+        state = self.storage.load_model_state(self.MODEL_NAME)
+        if state:
+            write_json(self.model_state_path, state)
+            return state
+        file_state = read_json(self.model_state_path, {})
+        if file_state:
+            self.storage.save_model_state(self.MODEL_NAME, file_state)
+            return file_state
+        state = self._default_state()
         self.storage.save_model_state(self.MODEL_NAME, state)
+        write_json(self.model_state_path, state)
         return state
 
     def _feature_vector(self, simulation_result: dict[str, Any]) -> dict[str, float]:
@@ -130,7 +144,7 @@ class LightweightMLModel:
         previous_loss = float(self.state.get('loss_ema', 0.0))
         self.state['loss_ema'] = previous_loss * 0.92 + abs(error) * 0.08
         self.state['samples_seen'] = samples_seen
-        self.storage.save_model_state(self.MODEL_NAME, self.state)
+        self._persist_state()
 
     def _source_weights(self) -> dict[str, float]:
         defaults = {'arxiv': 0.92, 'crossref': 0.88, 'wikipedia': 0.66, 'duckduckgo': 0.52}
@@ -165,7 +179,7 @@ class LightweightMLModel:
                 prediction=prediction,
                 confidence=0.28,
                 preferred_domains=[name for name, _ in sorted(source_weights.items(), key=lambda item: item[1], reverse=True)],
-                research_intensity=22,
+                research_intensity=min(CONFIG.max_external_queries, 22),
                 source_weights=source_weights,
                 model_state={'samples_seen': 0, 'loss_ema': 0.0, 'backend': self.backend},
                 hypotheses=[
@@ -181,13 +195,13 @@ class LightweightMLModel:
         samples_seen = int(self.state.get('samples_seen', 0))
         loss_ema = float(self.state.get('loss_ema', 0.0))
         confidence = clamp(0.32 + min(samples_seen, 40) * 0.012 - min(loss_ema / 5000.0, 0.18), 0.32, 0.94)
-        research_intensity = int(clamp(18 + (1.0 - confidence) * 18 + min(samples_seen, 20) * 0.6, 18, 48))
+        research_intensity = int(clamp(18 + (1.0 - confidence) * 18 + min(samples_seen, 20) * 0.6, 18, CONFIG.max_external_queries))
         preferred_domains = [name for name, _ in sorted(source_weights.items(), key=lambda item: item[1], reverse=True)]
         hypotheses = [
             f'El backend activo para aprendizaje es {self.backend}; el modelo principal es un regresor online dedicado al dominio del programa.',
             'Cada simulación actualiza pesos, medias y escalas internas para que el ML aprenda específicamente de este sistema y no de datos genéricos.',
             'El historial de conectividad y la utilidad observada de cada fuente afectan directamente la priorización de búsquedas externas.',
-            'La salida del modelo sigue siendo una ayuda de priorización avanzada; aún requiere verificación científica externa antes de tomar decisiones reales.',
+            'Los pesos del modelo también se persisten en JSON y SQLite para reanudar sesiones largas en Linux sin recalcular desde cero.',
         ]
         return HypothesisResult(
             prediction=blended_prediction,
