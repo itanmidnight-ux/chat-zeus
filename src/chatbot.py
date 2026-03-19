@@ -14,6 +14,7 @@ from src.knowledge import KnowledgeManager
 from src.ml import LightweightMLModel
 from src.optimizer import IterativeOptimizer
 from src.reporting import ReportWriter
+from src.response_control import build_user_response, estimate_implicit_satisfaction
 from src.simulation import SimulationEngine
 from src.storage import StorageManager
 from src.utils import detect_linker_memory_issue, extract_numeric_value, safe_error_message, sanitize_text
@@ -264,11 +265,56 @@ class ChatbotInterface:
             'external': external,
             'calculations': calculations,
         }
-        response_text = self.report_writer.render_text(payload)
-        self.storage.save_conversation(question, response_text, json.dumps({'fallback_error': safe_error_message(exc)}, ensure_ascii=False))
-        del recent_context, knowledge, domains, profile, simulation, external, calculations, ml_result, payload
+        analysis_data = self._prepare_response_control_data(question, simulation, calculations, external, ml_result, analysis, conclusions)
+        question_type, response_text = build_user_response(question, analysis_data)
+        satisfaction = estimate_implicit_satisfaction(question_type, response_text)
+        self.storage.append_response_feedback(question_type, len(response_text.split()), satisfaction)
+        self.storage.save_conversation(
+            question,
+            response_text,
+            json.dumps({'fallback_error': safe_error_message(exc), 'question_type': question_type, 'response_length': len(response_text.split()), 'satisfaction': satisfaction}, ensure_ascii=False),
+        )
+        del recent_context, knowledge, domains, profile, simulation, external, calculations, ml_result, payload, analysis_data
         gc.collect()
         return response_text
+
+    def _prepare_response_control_data(
+        self,
+        question: str,
+        simulation: dict[str, Any],
+        calculations: dict[str, Any],
+        external: dict[str, Any],
+        ml_result,
+        analysis: str,
+        conclusions: str,
+    ) -> dict[str, Any]:
+        synthesis = external.get('synthesis', {})
+        key_points: list[str] = []
+        if simulation.get('mode') == 'general_analysis':
+            key_points.extend(simulation.get('decision_axes', [])[:3])
+        else:
+            key_points.extend([
+                f"Delta-v aproximado de {round(float(simulation.get('delta_v_m_s', 0.0)), 2)} m/s",
+                f"Altitud estimada de {round(float(simulation.get('max_altitude_m', 0.0)), 2)} m",
+                f"Tiempo de combustión cercano a {round(float(simulation.get('burn_time_s', 0.0)), 2)} s",
+            ])
+        key_points.extend(item.get('summary', '') for item in calculations.get('items', [])[:2] if item.get('summary'))
+        notable_risks = list(synthesis.get('contradictions', [])[:2]) + list(synthesis.get('research_gaps', [])[:2])
+        recommended_actions = list(ml_result.recommendations[:2]) + list(synthesis.get('recommended_actions', [])[:2])
+        design_summary = conclusions if simulation.get('mode') != 'general_analysis' else analysis
+        summary = conclusions if len(conclusions) <= len(analysis) else analysis
+        direct_answer = conclusions.split('. ')[0].strip() if conclusions else analysis.split('. ')[0].strip()
+        return {
+            'direct_answer': direct_answer,
+            'summary': summary,
+            'analysis': analysis,
+            'conclusions': conclusions,
+            'design_summary': design_summary,
+            'key_points': [item for item in key_points if item],
+            'notable_risks': [item for item in notable_risks if item],
+            'recommended_actions': [item for item in recommended_actions if item],
+            'question': question,
+        }
 
     def answer(self, question: str) -> dict[str, Any]:
         recent_context = self.storage.recent_conversations(limit=CONFIG.max_history_messages)
@@ -347,10 +393,27 @@ class ChatbotInterface:
             'recent_context': [{'question': item['question'], 'created_at': item['created_at']} for item in recent_context[:3]],
         }
         report_path = self.report_writer.save(question, payload)
-        response_text = self.report_writer.render_text(payload)
-        self.storage.save_conversation(question, response_text, json.dumps({'profile': profile, 'simulation': simulation.get('resource_profile', {}), 'external_status': external.get('status', 'ok')}, ensure_ascii=False))
+        analysis_data = self._prepare_response_control_data(question, simulation, calculations, external, ml_result, analysis, conclusions)
+        question_type, response_text = build_user_response(question, analysis_data)
+        satisfaction = estimate_implicit_satisfaction(question_type, response_text)
+        self.storage.append_response_feedback(question_type, len(response_text.split()), satisfaction)
+        self.storage.save_conversation(
+            question,
+            response_text,
+            json.dumps({
+                'profile': profile,
+                'simulation': simulation.get('resource_profile', {}),
+                'external_status': external.get('status', 'ok'),
+                'question_type': question_type,
+                'response_length': len(response_text.split()),
+                'satisfaction': satisfaction,
+            }, ensure_ascii=False),
+        )
         payload['report_path'] = str(report_path)
         payload['response_text'] = response_text
+        payload['question_type'] = question_type
+        payload['response_length'] = len(response_text.split())
+        payload['implicit_satisfaction'] = satisfaction
         gc.collect()
         return payload
 

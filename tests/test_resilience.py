@@ -114,7 +114,7 @@ class ChatbotFallbackTests(unittest.TestCase):
 
             app.answer = raise_memory_error  # type: ignore[assignment]
             result = app.safe_answer('Explica la resistencia de materiales con carga=10 area=2')
-            self.assertIn('Análisis completo del problema:', result['response_text'])
+            self.assertNotIn('Análisis completo del problema:', result['response_text'])
         finally:
             app.answer = original_answer  # type: ignore[assignment]
             app.background_executor.shutdown()

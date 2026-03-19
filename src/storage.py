@@ -95,6 +95,13 @@ CREATE TABLE IF NOT EXISTS error_logs (
     context_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS response_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_type TEXT NOT NULL,
+    response_length INTEGER NOT NULL,
+    satisfaction REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
 '''
 
 SEED_DOCUMENTS = [
@@ -457,6 +464,12 @@ class StorageManager:
         self._execute_write(
             'INSERT INTO connectivity_events(source_type, status, latency_ms, detail, created_at) VALUES (?, ?, ?, ?, ?)',
             (source_type, status, float(latency_ms), detail[:500], utc_now_iso()),
+        )
+
+    def append_response_feedback(self, question_type: str, response_length: int, satisfaction: float) -> None:
+        self._execute_write(
+            'INSERT INTO response_feedback(question_type, response_length, satisfaction, created_at) VALUES (?, ?, ?, ?)',
+            (question_type, int(response_length), float(satisfaction), utc_now_iso()),
         )
 
     def connectivity_profile(self) -> dict[str, dict[str, float]]:
