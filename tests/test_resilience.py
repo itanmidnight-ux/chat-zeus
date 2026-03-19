@@ -46,6 +46,17 @@ class MLBackendSafetyTests(unittest.TestCase):
             self.assertEqual(model.backend, 'tflite_runtime')
 
 
+class TermuxUITests(unittest.TestCase):
+    def test_render_welcome_mentions_prompt_readiness(self) -> None:
+        from src.termux_ui import TermuxUI
+
+        ui = TermuxUI(colors=False)
+        welcome = ui.render_welcome()
+
+        self.assertIn('Haz tu pregunta cuando quieras', welcome)
+        self.assertIn('Pregunta >', ui.prompt())
+
+
 class ChatbotFallbackTests(unittest.TestCase):
     def test_safe_answer_returns_text_fallback_after_memory_error(self) -> None:
         app = build_app()

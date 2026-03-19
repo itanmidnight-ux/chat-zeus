@@ -33,6 +33,7 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
 - `src/termux_ui.py`: interfaz textual ligera con prompt claro y salida limpia para Termux.
 - `src/worker.py`: ejecutor silencioso de tareas en segundo plano, limitado a pocos workers y con degradación síncrona si el entorno no puede crear más hilos.
 - `data/chatbot/`, `data/models/`, `data/data/`, `data/logs/`: carpetas compatibles con el flujo pedido.
+- `requirements.txt`: dependencias ligeras instalables con `pip install -r requirements.txt`.
 
 ## Instalación en Termux
 
@@ -42,7 +43,11 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
    ```
 2. Instala dependencias compatibles y ligeras:
    ```bash
-   pip install numpy scipy pandas sympy requests
+   pip install -r requirements.txt
+   ```
+   Si prefieres instalar solo el núcleo mínimo:
+   ```bash
+   pip install numpy scipy pandas sympy requests transformers
    ```
 3. Opcionalmente añade un backend ML móvil si está disponible para tu dispositivo:
    ```bash
@@ -124,7 +129,7 @@ No sustituye herramientas de alta fidelidad como CFD, análisis estructural deta
 
 ## Interfaz en Termux
 
-Al iniciar, la app muestra un encabezado corto y un prompt `Pregunta >` para indicar claramente cuándo introducir la consulta. No se imprimen logs, trazas ni progreso interno en la terminal; esos datos quedan en archivos internos o checkpoints si son necesarios para reanudar procesos largos.
+Al iniciar, la app muestra un encabezado corto con la indicación de que ya puedes escribir y un prompt `Pregunta >` para marcar claramente cuándo introducir la consulta. No se imprimen logs, trazas ni progreso interno en la terminal; esos datos quedan en archivos internos o checkpoints si son necesarios para reanudar procesos largos.
 
 ## Nueva capacidad de investigación profunda y profesional
 
