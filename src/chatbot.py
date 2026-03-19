@@ -21,6 +21,10 @@ from src.worker import BackgroundExecutor
 
 class ChatbotInterface:
     ENGINEERING_DOMAINS = {'spacecraft', 'physics', 'chemistry', 'materials', 'systems', 'aerospace'}
+    ANALYTICAL_KEYWORDS = {
+        'derivada', 'integral', 'matriz', 'ecuación', 'ecuacion', 'resuelve', 'resolver', 'solve',
+        'geología', 'geologia', 'material', 'stress', 'esfuerzo', 'resistencia', 'sismo', 'sedimento',
+    }
     SIMULATION_KEYWORDS = {
         'cohete', 'rocket', 'lanzador', 'orbita', 'orbital', 'trayectoria', 'delta-v', 'delta_v',
         'payload', 'combustible', 'fuel', 'thrust', 'empuje', 'drag', 'propulsion', 'propulsión',
@@ -79,10 +83,13 @@ class ChatbotInterface:
     def _profile_question(self, question: str, inferred_domains: list[str]) -> dict[str, Any]:
         lowered = question.lower()
         explicit_general = any(token in lowered for token in ['explica', 'resume', 'analiza', 'compar', 'riesgo', 'viabilidad'])
+        analytical_signal = any(token in lowered for token in self.ANALYTICAL_KEYWORDS)
         simulation_signal = any(token in lowered for token in self.SIMULATION_KEYWORDS) or any(
             key in lowered for key in ['payload=', 'fuel=', 'combustible=', 'thrust=', 'empuje=', 'pasos=', 'steps=']
         )
         requires_simulation = simulation_signal or any(domain in self.ENGINEERING_DOMAINS for domain in inferred_domains)
+        if analytical_signal and not simulation_signal:
+            requires_simulation = False
         if explicit_general and not simulation_signal:
             requires_simulation = False
         focus = 'simulation' if requires_simulation else 'general_analysis'
@@ -159,8 +166,8 @@ class ChatbotInterface:
             'estimaciones básicas de gravedad, arrastre, propulsión y termodinámica, además de una capa de aprendizaje incremental con checkpoints persistentes. '
             'La consulta activó una investigación web multi-fuente con planificación por dominios, evaluación de evidencia, detección básica de contradicciones, conectividad reforzada con reintentos y priorización adaptativa de fuentes.'
             f' Resumen RAG: {knowledge_summary}.{context_hint}'
-            f" La corrida activa {simulation['run_id']} se ejecutó en bloques pequeños para respetar límites de memoria de Termux."
-            f" El apoyo externo terminó con estado {external['status']} tras {external.get('queries_executed', 0)} búsquedas, una señal de factibilidad aproximada de {synthesis.get('feasibility_signal', 0.0)}, una calidad media de evidencia de {synthesis.get('quality_score', 0.0)} y un mapa de conectividad por fuente para endurecer futuras consultas."
+            ' El proceso se ejecutó en bloques pequeños para respetar límites de memoria de Termux.'
+            f" La investigación complementaria aportó una señal de factibilidad aproximada de {synthesis.get('feasibility_signal', 0.0)} y una calidad media de evidencia de {synthesis.get('quality_score', 0.0)}."
         )
         if simulation.get('mode') == 'general_analysis':
             conclusions = (
