@@ -1,0 +1,149 @@
+"""Utility package exposing shared helpers and exact cognitive-system utility modules."""
+from __future__ import annotations
+
+import contextlib
+import json
+import logging
+import os
+import re
+import traceback
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from src.config import CONFIG
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def setup_logging(log_dir: Path) -> logging.Logger:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger('chat_zeus')
+    if logger.handlers:
+        return logger
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+    file_handler = logging.FileHandler(log_dir / 'chat_zeus.log', encoding='utf-8')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.propagate = False
+    return logger
+
+
+def read_json(path: Path, default: Any) -> Any:
+    try:
+        if not path.exists():
+            return default
+        with path.open('r', encoding='utf-8') as handle:
+            return json.load(handle)
+    except (json.JSONDecodeError, OSError, ValueError, TypeError):
+        return default
+
+
+def write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(path.suffix + '.tmp')
+    with temp_path.open('w', encoding='utf-8') as handle:
+        json.dump(payload, handle, indent=2, ensure_ascii=False)
+    temp_path.replace(path)
+
+
+def safe_error_message(exc: Exception) -> str:
+    return f'{exc.__class__.__name__}: {exc}'
+
+
+def format_exception(exc: Exception) -> str:
+    return ''.join(traceback.format_exception(exc))
+
+
+def clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def sanitize_text(text: str) -> str:
+    return re.sub(r'\s+', ' ', str(text)).strip()
+
+
+def extract_numeric_value(text: str, pattern: str, default: float | int | None = None) -> float | int | None:
+    match = re.search(pattern, text, re.IGNORECASE)
+    if not match:
+        return default
+    raw = match.group(1).replace(',', '.')
+    if raw.isdigit():
+        return int(raw)
+    with contextlib.suppress(ValueError):
+        value = float(raw)
+        return int(value) if value.is_integer() else value
+    return default
+
+
+def soft_memory_limit_bytes(megabytes: int) -> int:
+    return max(32, megabytes) * 1024 * 1024
+
+
+def recommended_math_threads(max_workers: int | None = None) -> int:
+    workers = max_workers or CONFIG.max_workers
+    return max(1, min(4, workers))
+
+
+def ensure_environment_defaults() -> None:
+    math_threads = str(recommended_math_threads(CONFIG.max_workers)).strip()
+    os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
+    os.environ.setdefault('PYTHONUNBUFFERED', '1')
+    os.environ.setdefault('OMP_NUM_THREADS', math_threads)
+    os.environ.setdefault('OPENBLAS_NUM_THREADS', math_threads)
+    os.environ.setdefault('MKL_NUM_THREADS', math_threads)
+    os.environ.setdefault('NUMEXPR_NUM_THREADS', math_threads)
+    os.environ.setdefault('VECLIB_MAXIMUM_THREADS', math_threads)
+    os.environ.setdefault('BLIS_NUM_THREADS', math_threads)
+    os.environ.setdefault('MALLOC_ARENA_MAX', '2')
+
+
+def apply_soft_memory_limit(megabytes: int) -> None:
+    try:
+        import resource
+    except Exception:
+        return
+    limit = soft_memory_limit_bytes(megabytes)
+    with contextlib.suppress(Exception):
+        current_soft, current_hard = resource.getrlimit(resource.RLIMIT_AS)
+        target_soft = limit if current_soft in (-1, resource.RLIM_INFINITY) else min(current_soft, limit)
+        target_hard = current_hard if current_hard not in (-1, resource.RLIM_INFINITY) else max(limit, target_soft)
+        resource.setrlimit(resource.RLIMIT_AS, (target_soft, target_hard))
+
+
+def estimate_step_budget(requested_steps: int, chunk_size: int, memory_mb: int, max_cap: int) -> int:
+    requested = max(chunk_size, int(requested_steps))
+    logical_cap = max(chunk_size, int(max_cap))
+    memory_factor = max(1, memory_mb // 128)
+    safe_budget = max(chunk_size, min(logical_cap, chunk_size * memory_factor * 4))
+    return max(chunk_size, min(requested, safe_budget, logical_cap))
+
+
+def adaptive_chunk_size(requested_steps: int, memory_mb: int, cpu_count: int, base_chunk_size: int) -> int:
+    memory_factor = max(1, memory_mb // 256)
+    cpu_factor = max(1, min(cpu_count, 8))
+    dynamic = base_chunk_size * min(6, memory_factor + cpu_factor // 2)
+    safe_dynamic = max(base_chunk_size, min(dynamic, max(base_chunk_size * 8, requested_steps // 4 or base_chunk_size)))
+    return max(base_chunk_size, safe_dynamic)
+
+
+def detect_linker_memory_issue(exc: BaseException) -> bool:
+    message = safe_error_message(exc if isinstance(exc, Exception) else Exception(str(exc)))
+    markers = ['create_new_page', 'MAP_FAILED', 'linker_block_allocator', 'cannot allocate memory', 'std::bad_alloc']
+    lowered = message.lower()
+    return any(marker.lower() in lowered for marker in markers)
+
+
+from .filters import clean_input, clean_output  # noqa: E402
+from .handlers import handle_simple_queries  # noqa: E402
+from .intent import classify_intent  # noqa: E402
+
+__all__ = [
+    'adaptive_chunk_size', 'apply_soft_memory_limit', 'classify_intent', 'clamp', 'clean_input', 'clean_output',
+    'detect_linker_memory_issue', 'ensure_environment_defaults', 'estimate_step_budget', 'extract_numeric_value',
+    'format_exception', 'handle_simple_queries', 'read_json', 'recommended_math_threads', 'safe_error_message',
+    'sanitize_text', 'setup_logging', 'soft_memory_limit_bytes', 'utc_now_iso', 'write_json',
+]
