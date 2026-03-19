@@ -102,6 +102,48 @@ CREATE TABLE IF NOT EXISTS response_feedback (
     satisfaction REAL NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS episode_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question TEXT NOT NULL,
+    pattern_key TEXT NOT NULL,
+    route TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    score REAL NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS failure_memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question TEXT NOT NULL,
+    pattern_key TEXT NOT NULL,
+    route TEXT NOT NULL,
+    error_type TEXT NOT NULL,
+    message TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS strategy_stats (
+    route TEXT NOT NULL,
+    pattern_key TEXT NOT NULL,
+    success_count INTEGER NOT NULL DEFAULT 0,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    total_score REAL NOT NULL DEFAULT 0,
+    average_score REAL NOT NULL DEFAULT 0,
+    success_rate REAL NOT NULL DEFAULT 0,
+    last_latency_ms REAL NOT NULL DEFAULT 0,
+    last_memory_mb REAL NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(route, pattern_key)
+);
+CREATE TABLE IF NOT EXISTS learned_patterns (
+    pattern_key TEXT PRIMARY KEY,
+    intent TEXT NOT NULL,
+    route TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    support_count INTEGER NOT NULL,
+    sample_question TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 '''
 
 SEED_DOCUMENTS = [
@@ -471,6 +513,92 @@ class StorageManager:
             'INSERT INTO response_feedback(question_type, response_length, satisfaction, created_at) VALUES (?, ?, ?, ?)',
             (question_type, int(response_length), float(satisfaction), utc_now_iso()),
         )
+
+    def save_episode(self, *, question: str, pattern_key: str, route: str, outcome: str, score: float, payload_json: str) -> None:
+        self._execute_write(
+            'INSERT INTO episode_memory(question, pattern_key, route, outcome, score, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (question, pattern_key, route, outcome, float(score), self._trim_context_json(payload_json), utc_now_iso()),
+        )
+
+    def load_recent_episodes(self, *, pattern_key: str | None = None, limit: int = 10) -> list[dict[str, Any]]:
+        if pattern_key:
+            sql = 'SELECT question, pattern_key, route, outcome, score, payload_json, created_at FROM episode_memory WHERE pattern_key = ? ORDER BY id DESC LIMIT ?'
+            params: tuple[Any, ...] = (pattern_key, max(1, int(limit)))
+        else:
+            sql = 'SELECT question, pattern_key, route, outcome, score, payload_json, created_at FROM episode_memory ORDER BY id DESC LIMIT ?'
+            params = (max(1, int(limit)),)
+        with self._streaming_cursor(sql, params) as cursor:
+            return list(self._row_dict_stream(cursor))
+
+    def save_failure(self, *, question: str, pattern_key: str, route: str, error_type: str, message: str, payload_json: str) -> None:
+        self._execute_write(
+            'INSERT INTO failure_memory(question, pattern_key, route, error_type, message, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (question, pattern_key, route, error_type, message[:500], self._trim_context_json(payload_json), utc_now_iso()),
+        )
+
+    def load_recent_failures(self, *, pattern_key: str | None = None, limit: int = 10) -> list[dict[str, Any]]:
+        if pattern_key:
+            sql = 'SELECT question, pattern_key, route, error_type, message, payload_json, created_at FROM failure_memory WHERE pattern_key = ? ORDER BY id DESC LIMIT ?'
+            params: tuple[Any, ...] = (pattern_key, max(1, int(limit)))
+        else:
+            sql = 'SELECT question, pattern_key, route, error_type, message, payload_json, created_at FROM failure_memory ORDER BY id DESC LIMIT ?'
+            params = (max(1, int(limit)),)
+        with self._streaming_cursor(sql, params) as cursor:
+            return list(self._row_dict_stream(cursor))
+
+    def update_strategy_stat(self, *, route: str, pattern_key: str, success: bool, score: float, latency_ms: float, memory_mb: float) -> None:
+        existing = self.load_strategy_stat(route, pattern_key) or {'success_count': 0, 'failure_count': 0, 'total_score': 0.0}
+        success_count = int(existing.get('success_count', 0)) + (1 if success else 0)
+        failure_count = int(existing.get('failure_count', 0)) + (0 if success else 1)
+        total_score = float(existing.get('total_score', 0.0)) + float(score)
+        sample_count = max(1, success_count + failure_count)
+        average_score = total_score / sample_count
+        success_rate = success_count / sample_count
+        self._execute_write(
+            '''
+            INSERT INTO strategy_stats(route, pattern_key, success_count, failure_count, total_score, average_score, success_rate, last_latency_ms, last_memory_mb, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(route, pattern_key) DO UPDATE SET
+                success_count=excluded.success_count,
+                failure_count=excluded.failure_count,
+                total_score=excluded.total_score,
+                average_score=excluded.average_score,
+                success_rate=excluded.success_rate,
+                last_latency_ms=excluded.last_latency_ms,
+                last_memory_mb=excluded.last_memory_mb,
+                updated_at=excluded.updated_at
+            ''',
+            (route, pattern_key, success_count, failure_count, total_score, average_score, success_rate, float(latency_ms), float(memory_mb), utc_now_iso()),
+        )
+
+    def load_strategy_stat(self, route: str, pattern_key: str) -> dict[str, Any] | None:
+        with self._streaming_cursor('SELECT * FROM strategy_stats WHERE route = ? AND pattern_key = ?', (route, pattern_key)) as cursor:
+            row = cursor.fetchone()
+        if not row:
+            return None
+        payload = dict(row)
+        payload['sample_count'] = int(payload.get('success_count', 0)) + int(payload.get('failure_count', 0))
+        return payload
+
+    def save_learned_pattern(self, *, pattern_key: str, intent: str, route: str, confidence: float, support_count: int, sample_question: str) -> None:
+        self._execute_write(
+            '''
+            INSERT INTO learned_patterns(pattern_key, intent, route, confidence, support_count, sample_question, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(pattern_key) DO UPDATE SET
+                intent=excluded.intent,
+                route=excluded.route,
+                confidence=excluded.confidence,
+                support_count=excluded.support_count,
+                sample_question=excluded.sample_question,
+                updated_at=excluded.updated_at
+            ''',
+            (pattern_key, intent, route, float(confidence), int(support_count), sample_question[:200], utc_now_iso()),
+        )
+
+    def load_learned_pattern(self, pattern_key: str) -> dict[str, Any] | None:
+        with self._streaming_cursor('SELECT * FROM learned_patterns WHERE pattern_key = ?', (pattern_key,)) as cursor:
+            row = cursor.fetchone()
+        return dict(row) if row else None
 
     def connectivity_profile(self) -> dict[str, dict[str, float]]:
         with self._streaming_cursor(

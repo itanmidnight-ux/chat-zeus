@@ -32,8 +32,9 @@ class TaskExecutor:
             return generate_solution(question)
         if intent == 'identity':
             return 'Soy un asistente autónomo de razonamiento y ejecución seguro.'
-        if intent == 'analysis' and question.lower().startswith('python:'):
-            return execute_code_safely(question.split(':', 1)[1])
+        if intent == 'execution' or (intent == 'analysis' and question.lower().startswith('python:')):
+            code = question.split(':', 1)[1] if ':' in question else question
+            return execute_code_safely(code)
         if intent == 'analysis':
             return generate_solution(question)
         return self.fact_engine.search_and_learn(question)

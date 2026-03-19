@@ -1,4 +1,4 @@
-"""Lightweight persistent memory for learned facts and generated solutions."""
+"""Lightweight persistent memory for learned facts, patterns, failures, and generated solutions."""
 from __future__ import annotations
 
 import hashlib
@@ -9,13 +9,14 @@ from typing import Any
 
 
 class LightweightMemory:
+    DEFAULT_BUCKETS = ('facts', 'solutions', 'patterns', 'failures', 'episodes')
+
     def __init__(self, path: Path, limit: int = 500):
         self.path = path
         self.limit = max(10, limit)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.memory: dict[str, OrderedDict[str, dict[str, Any]]] = {
-            'facts': OrderedDict(),
-            'solutions': OrderedDict(),
+            bucket: OrderedDict() for bucket in self.DEFAULT_BUCKETS
         }
         self._load()
 
@@ -26,7 +27,7 @@ class LightweightMemory:
             payload = json.loads(self.path.read_text(encoding='utf-8'))
         except (OSError, json.JSONDecodeError):
             return
-        for bucket in ('facts', 'solutions'):
+        for bucket in self.DEFAULT_BUCKETS:
             items = payload.get(bucket, {})
             if isinstance(items, dict):
                 self.memory[bucket] = OrderedDict(items)
@@ -42,8 +43,9 @@ class LightweightMemory:
 
     def _enforce_limit(self) -> None:
         total = sum(len(values) for values in self.memory.values())
+        priority = ['episodes', 'failures', 'patterns', 'facts', 'solutions']
         while total > self.limit:
-            bucket = 'facts' if len(self.memory['facts']) >= len(self.memory['solutions']) else 'solutions'
+            bucket = next((name for name in priority if self.memory.get(name)), 'facts')
             if self.memory[bucket]:
                 self.memory[bucket].popitem(last=False)
             total = sum(len(values) for values in self.memory.values())
@@ -56,9 +58,11 @@ class LightweightMemory:
         self.memory[bucket].move_to_end(key)
         return item
 
-    def put(self, bucket: str, query: str, value: str, source: str = 'local') -> None:
+    def put(self, bucket: str, query: str, value: str | dict[str, Any], source: str = 'local') -> None:
         key = self.make_key(query)
-        payload = {'query': query, 'value': value, 'source': source}
+        payload = value if isinstance(value, dict) else {'query': query, 'value': value, 'source': source}
+        payload.setdefault('query', query)
+        payload.setdefault('source', source)
         self.memory.setdefault(bucket, OrderedDict())[key] = payload
         self.memory[bucket].move_to_end(key)
         self._enforce_limit()
