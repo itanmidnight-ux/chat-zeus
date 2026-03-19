@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+data/data/knowledge.sqlite3
+data/data/checkpoints/*.json
+!data/data/checkpoints/.gitkeep
+data/data/reports/*.json
+!data/data/reports/.gitkeep
+data/logs/*.log
+!data/logs/.gitkeep
