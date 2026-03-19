@@ -73,3 +73,27 @@ class StorageManagerStreamingTests(unittest.TestCase):
             streamed = list(storage.iter_recent_conversations(limit=2))
 
             self.assertEqual([item['question'] for item in streamed], ['q2', 'q1'])
+
+    def test_ml_observations_prediction_logs_and_error_logs_are_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = StorageManager(Path(tmp) / 'knowledge.sqlite3', Path(tmp) / 'checkpoints')
+            storage.append_ml_observation('{"delta_v": 1}', 2.5, 0.8)
+            storage.save_ml_checkpoint('demo', {'weights': {'delta_v': 1.0}})
+            storage.log_prediction(
+                question='q',
+                prediction=1.2,
+                confidence=0.9,
+                reliability=0.8,
+                variables=['masa'],
+                hypotheses=['h1'],
+                recommendations=['r1'],
+            )
+            storage.log_error('ml', 'ValueError', 'boom', {'step': 'predict'})
+
+            observations = storage.load_ml_observations(limit=1)
+            summary = storage.ml_observation_summary()
+            checkpoint = storage.load_ml_checkpoint('demo')
+
+            self.assertEqual(observations[0]['reliability'], 0.8)
+            self.assertAlmostEqual(summary['avg_reliability'], 0.8)
+            self.assertEqual(checkpoint['weights']['delta_v'], 1.0)

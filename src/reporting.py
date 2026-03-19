@@ -67,6 +67,9 @@ class ReportWriter:
             'Hipótesis y predicción final:',
             f"- Predicción derivada: {ml['prediction']:.3f}",
             f"- Confianza estimada: {ml['confidence']:.2f}",
+            f"- Confiabilidad de datos usada por ML: {ml.get('reliability_score', 'n/d')}",
+            f"- Variables consideradas por ML: {', '.join(ml.get('variables_considered', [])) or 'n/d'}",
+            f"- Variables que más afectan la incertidumbre: {', '.join(ml.get('uncertainty_drivers', [])) or 'n/d'}",
             f"- Intensidad de investigación sugerida por ML: {ml.get('research_intensity', 'n/d')} búsquedas",
             f"- Fuentes priorizadas por ML: {', '.join(ml.get('preferred_domains', [])) or 'n/d'}",
             *[f'- {item}' for item in top_hypotheses],
@@ -118,5 +121,8 @@ class ReportWriter:
             ])
             for item in calculations.get('items', [])[:6]:
                 lines.append(f"- [{item.get('type', 'analysis')}] {item.get('title', 'Resultado')}: {item.get('summary', 'n/d')}")
-        lines.extend(['', 'Recomendaciones y conclusiones:', payload['conclusions']])
+        lines.extend(['', 'Recomendaciones y conclusiones:'])
+        for item in ml.get('recommendations', [])[:4]:
+            lines.append(f'- {item}')
+        lines.append(payload['conclusions'])
         return '\n'.join(lines)

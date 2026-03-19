@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS ml_observations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     features_json TEXT NOT NULL,
     target REAL NOT NULL,
+    reliability REAL NOT NULL DEFAULT 0.5,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS research_sessions (
@@ -68,6 +69,30 @@ CREATE TABLE IF NOT EXISTS connectivity_events (
     status TEXT NOT NULL,
     latency_ms REAL NOT NULL,
     detail TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ml_checkpoints (
+    name TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS prediction_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question TEXT NOT NULL,
+    prediction REAL NOT NULL,
+    confidence REAL NOT NULL,
+    reliability REAL NOT NULL,
+    variables_json TEXT NOT NULL,
+    hypotheses_json TEXT NOT NULL,
+    recommendations_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS error_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    component TEXT NOT NULL,
+    error_type TEXT NOT NULL,
+    message TEXT NOT NULL,
+    context_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 '''
@@ -203,6 +228,9 @@ class StorageManager:
     def _initialize_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(SCHEMA_SQL)
+            columns = {row[1] for row in conn.execute("PRAGMA table_info('ml_observations')").fetchall()}
+            if 'reliability' not in columns:
+                conn.execute("ALTER TABLE ml_observations ADD COLUMN reliability REAL NOT NULL DEFAULT 0.5")
             self._seed_documents(conn)
 
     def _recover_sqlite_files(self) -> None:
@@ -293,14 +321,14 @@ class StorageManager:
         with self._streaming_cursor(sql) as cursor:
             return list(self._row_dict_stream(cursor))
 
-    def append_ml_observation(self, features_json: str, target: float) -> None:
+    def append_ml_observation(self, features_json: str, target: float, reliability: float = 0.5) -> None:
         self._execute_write(
-            'INSERT INTO ml_observations(features_json, target, created_at) VALUES (?, ?, ?)',
-            (self._trim_context_json(features_json), target, utc_now_iso()),
+            'INSERT INTO ml_observations(features_json, target, reliability, created_at) VALUES (?, ?, ?, ?)',
+            (self._trim_context_json(features_json), target, float(reliability), utc_now_iso()),
         )
 
     def load_ml_observations(self, limit: int | None = None) -> list[dict[str, Any]]:
-        sql = 'SELECT features_json, target FROM ml_observations ORDER BY id DESC'
+        sql = 'SELECT features_json, target, reliability FROM ml_observations ORDER BY id DESC'
         params: tuple[Any, ...] = ()
         if limit is not None:
             sql += ' LIMIT ?'
@@ -316,7 +344,8 @@ class StorageManager:
             SELECT COUNT(*) AS samples_seen,
                    AVG(target) AS avg_target,
                    MIN(target) AS min_target,
-                   MAX(target) AS max_target
+                   MAX(target) AS max_target,
+                   AVG(reliability) AS avg_reliability
             FROM ml_observations
             '''
         ) as cursor:
@@ -326,6 +355,7 @@ class StorageManager:
             'avg_target': float(row['avg_target'] or 0.0),
             'min_target': float(row['min_target'] or 0.0),
             'max_target': float(row['max_target'] or 0.0),
+            'avg_reliability': float(row['avg_reliability'] or 0.0),
         }
 
     def save_research_session(self, question: str, profile_json: str, findings_count: int, quality_score: float) -> None:
@@ -371,6 +401,57 @@ class StorageManager:
         if not row:
             return None
         return read_json_string(str(row['state_json']))
+
+    def save_ml_checkpoint(self, name: str, payload: dict[str, Any]) -> None:
+        self._execute_write(
+            '''
+            INSERT INTO ml_checkpoints(name, payload_json, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at
+            ''',
+            (name, json.dumps(payload, ensure_ascii=False), utc_now_iso()),
+        )
+
+    def load_ml_checkpoint(self, name: str) -> dict[str, Any] | None:
+        with self._streaming_cursor('SELECT payload_json FROM ml_checkpoints WHERE name = ?', (name,)) as cursor:
+            row = cursor.fetchone()
+        if not row:
+            return None
+        return read_json_string(str(row['payload_json']))
+
+    def log_prediction(
+        self,
+        *,
+        question: str,
+        prediction: float,
+        confidence: float,
+        reliability: float,
+        variables: list[str],
+        hypotheses: list[str],
+        recommendations: list[str],
+    ) -> None:
+        self._execute_write(
+            '''
+            INSERT INTO prediction_logs(
+                question, prediction, confidence, reliability, variables_json, hypotheses_json, recommendations_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                question,
+                float(prediction),
+                float(confidence),
+                float(reliability),
+                json.dumps(variables, ensure_ascii=False),
+                json.dumps(hypotheses, ensure_ascii=False),
+                json.dumps(recommendations, ensure_ascii=False),
+                utc_now_iso(),
+            ),
+        )
+
+    def log_error(self, component: str, error_type: str, message: str, context: dict[str, Any] | None = None) -> None:
+        self._execute_write(
+            'INSERT INTO error_logs(component, error_type, message, context_json, created_at) VALUES (?, ?, ?, ?, ?)',
+            (component, error_type, message[:1000], self._trim_context_json(json.dumps(context or {}, ensure_ascii=False)), utc_now_iso()),
+        )
 
     def save_connectivity_event(self, source_type: str, status: str, latency_ms: float, detail: str) -> None:
         self._execute_write(
