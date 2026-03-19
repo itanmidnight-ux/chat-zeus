@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +87,8 @@ SEED_DOCUMENTS = [
 
 
 class StorageManager:
+    SQLITE_SIDECAR_SUFFIXES = ('', '-wal', '-shm', '-journal')
+
     def __init__(self, db_path: Path, checkpoint_dir: Path):
         self.db_path = db_path
         self.checkpoint_dir = checkpoint_dir
@@ -98,19 +101,38 @@ class StorageManager:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        try:
-            conn.execute(f'PRAGMA journal_mode={self._journal_mode}')
-        except sqlite3.OperationalError:
-            self._journal_mode = 'DELETE'
-            conn.execute(f'PRAGMA journal_mode={self._journal_mode}')
-        conn.execute('PRAGMA synchronous=NORMAL')
-        try:
-            conn.execute(f'PRAGMA temp_store={self._temp_store}')
-        except sqlite3.OperationalError:
-            self._temp_store = 'MEMORY'
-            conn.execute(f'PRAGMA temp_store={self._temp_store}')
-        conn.execute('PRAGMA cache_size=-2048')
+        self._apply_pragmas(conn)
         return conn
+
+    @staticmethod
+    def _is_disk_io_error(exc: sqlite3.OperationalError) -> bool:
+        return 'disk i/o error' in str(exc).lower()
+
+    def _set_pragma(self, conn: sqlite3.Connection, pragma_sql: str, *, fallback_sql: str | None = None, update_attr: tuple[str, str] | None = None) -> None:
+        try:
+            conn.execute(pragma_sql)
+        except sqlite3.OperationalError as exc:
+            if fallback_sql is None or not self._is_disk_io_error(exc):
+                raise
+            if update_attr is not None:
+                setattr(self, update_attr[0], update_attr[1])
+            conn.execute(fallback_sql)
+
+    def _apply_pragmas(self, conn: sqlite3.Connection) -> None:
+        self._set_pragma(
+            conn,
+            f'PRAGMA journal_mode={self._journal_mode}',
+            fallback_sql='PRAGMA journal_mode=DELETE',
+            update_attr=('_journal_mode', 'DELETE'),
+        )
+        conn.execute('PRAGMA synchronous=NORMAL')
+        self._set_pragma(
+            conn,
+            f'PRAGMA temp_store={self._temp_store}',
+            fallback_sql='PRAGMA temp_store=MEMORY',
+            update_attr=('_temp_store', 'MEMORY'),
+        )
+        conn.execute('PRAGMA cache_size=-2048')
 
     def _seed_documents(self, conn: sqlite3.Connection) -> None:
         seed_count = conn.execute('SELECT COUNT(*) FROM knowledge_documents').fetchone()[0]
@@ -126,14 +148,31 @@ class StorageManager:
             conn.executescript(SCHEMA_SQL)
             self._seed_documents(conn)
 
+    def _recover_sqlite_files(self) -> None:
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+        recovered = False
+        for suffix in self.SQLITE_SIDECAR_SUFFIXES:
+            candidate = Path(f'{self.db_path}{suffix}')
+            if not candidate.exists():
+                continue
+            recovered = True
+            target = candidate.with_name(f'{candidate.name}.corrupt-{stamp}')
+            try:
+                candidate.replace(target)
+            except OSError:
+                candidate.unlink(missing_ok=True)
+        if recovered:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
     def _init_db(self) -> None:
         try:
             self._initialize_schema()
         except sqlite3.OperationalError as exc:
-            if 'disk i/o error' not in str(exc).lower() or (self._journal_mode == 'DELETE' and self._temp_store == 'MEMORY'):
+            if not self._is_disk_io_error(exc):
                 raise
             self._journal_mode = 'DELETE'
             self._temp_store = 'MEMORY'
+            self._recover_sqlite_files()
             self._initialize_schema()
 
     def search_knowledge(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
