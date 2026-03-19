@@ -1,6 +1,7 @@
 """Persistencia en SQLite y checkpoints JSON para reanudación."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,33 @@ class StorageManager:
                     target REAL NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS research_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    question TEXT NOT NULL,
+                    profile_json TEXT NOT NULL,
+                    findings_count INTEGER NOT NULL,
+                    quality_score REAL NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS source_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_type TEXT NOT NULL,
+                    usefulness REAL NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS model_state (
+                    name TEXT PRIMARY KEY,
+                    state_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS connectivity_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    latency_ms REAL NOT NULL,
+                    detail TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 '''
             )
             seed_count = conn.execute('SELECT COUNT(*) FROM knowledge_documents').fetchone()[0]
@@ -65,6 +93,13 @@ class StorageManager:
                     ('Gas ideal', 'thermo', 'P * V = n * R * T. Aproximación termodinámica básica para gases.', 'local_seed'),
                     ('Propulsión química', 'chemistry', 'La energía específica y la relación de mezcla afectan empuje, temperatura de cámara e impulso específico.', 'local_seed'),
                     ('Trayectoria balística simplificada', 'physics', 'El alcance depende de velocidad inicial, gravedad, drag y tiempo de combustión efectivo.', 'local_seed'),
+                    ('Análisis de sistemas complejos', 'systems', 'Dividir el problema en subsistemas, restricciones, riesgos, verificación y experimentos acelera la investigación seria.', 'local_seed'),
+                    ('Ingeniería de misión', 'mission', 'Un diseño de misión debe separar factibilidad física, coste energético, seguridad, materiales y operaciones.', 'local_seed'),
+                    ('Modelado matemático', 'math', 'Todo problema complejo mejora si se formula con variables, restricciones, supuestos y ecuaciones verificables.', 'local_seed'),
+                    ('Análisis geopolítico', 'geopolitics', 'La geopolítica exige evaluar actores, incentivos, capacidades, riesgos, alianzas y consecuencias de segundo orden.', 'local_seed'),
+                    ('Economía aplicada', 'economics', 'Las decisiones económicas deben ponderar incentivos, costes de oportunidad, elasticidades y efectos sistémicos.', 'local_seed'),
+                    ('Biología y medicina', 'biology', 'Las hipótesis biológicas deben contrastarse con mecanismos causales, evidencia empírica y límites éticos.', 'local_seed'),
+                    ('Arquitectura de software', 'computing', 'Un sistema robusto requiere modularidad, observabilidad, tolerancia a fallos y ciclos de validación continua.', 'local_seed'),
                 ]
                 conn.executemany(
                     'INSERT INTO knowledge_documents(title, category, content, source, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -139,6 +174,81 @@ class StorageManager:
             rows = conn.execute('SELECT features_json, target FROM ml_observations ORDER BY id ASC').fetchall()
         return [dict(row) for row in rows]
 
+    def save_research_session(self, question: str, profile_json: str, findings_count: int, quality_score: float) -> None:
+        created_at = utc_now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                'INSERT INTO research_sessions(question, profile_json, findings_count, quality_score, created_at) VALUES (?, ?, ?, ?, ?)',
+                (question, profile_json, findings_count, quality_score, created_at),
+            )
+            profile = read_json_string(profile_json)
+            for item in profile.get('findings', [])[:12]:
+                usefulness = float(item.get('score', 0.0))
+                conn.execute(
+                    'INSERT INTO source_feedback(source_type, usefulness, created_at) VALUES (?, ?, ?)',
+                    (item.get('source_type', 'unknown'), usefulness, created_at),
+                )
+
+    def load_recent_research_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                'SELECT question, profile_json, findings_count, quality_score, created_at FROM research_sessions ORDER BY id DESC LIMIT ?',
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def source_performance_profile(self) -> dict[str, float]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                'SELECT source_type, AVG(usefulness) AS avg_usefulness FROM source_feedback GROUP BY source_type'
+            ).fetchall()
+        return {str(row['source_type']): float(row['avg_usefulness']) for row in rows}
+
+    def save_model_state(self, name: str, state: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                '''
+                INSERT INTO model_state(name, state_json, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET state_json=excluded.state_json, updated_at=excluded.updated_at
+                ''',
+                (name, json.dumps(state, ensure_ascii=False), utc_now_iso()),
+            )
+
+    def load_model_state(self, name: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute('SELECT state_json FROM model_state WHERE name = ?', (name,)).fetchone()
+        if not row:
+            return None
+        return read_json_string(str(row['state_json']))
+
+    def save_connectivity_event(self, source_type: str, status: str, latency_ms: float, detail: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                'INSERT INTO connectivity_events(source_type, status, latency_ms, detail, created_at) VALUES (?, ?, ?, ?, ?)',
+                (source_type, status, float(latency_ms), detail[:500], utc_now_iso()),
+            )
+
+    def connectivity_profile(self) -> dict[str, dict[str, float]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                '''
+                SELECT source_type,
+                       AVG(CASE WHEN status = 'ok' THEN 1.0 ELSE 0.0 END) AS success_rate,
+                       AVG(latency_ms) AS avg_latency_ms,
+                       COUNT(*) AS total_events
+                FROM connectivity_events
+                GROUP BY source_type
+                '''
+            ).fetchall()
+        return {
+            str(row['source_type']): {
+                'success_rate': float(row['success_rate'] or 0.0),
+                'avg_latency_ms': float(row['avg_latency_ms'] or 0.0),
+                'total_events': float(row['total_events'] or 0.0),
+            }
+            for row in rows
+        }
+
     def checkpoint_path(self, run_id: str) -> Path:
         return self.checkpoint_dir / f'{run_id}.json'
 
@@ -147,3 +257,10 @@ class StorageManager:
 
     def save_checkpoint(self, run_id: str, payload: dict[str, Any]) -> None:
         write_json(self.checkpoint_path(run_id), payload)
+
+
+def read_json_string(payload: str) -> dict[str, Any]:
+    try:
+        return json.loads(payload)
+    except Exception:
+        return {}

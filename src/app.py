@@ -24,7 +24,7 @@ def build_app() -> ChatbotInterface:
     knowledge = KnowledgeManager(storage)
     simulation = SimulationEngine(storage, chunk_size=CONFIG.simulation_chunk_size)
     ml_model = LightweightMLModel(storage)
-    external_fetcher = ExternalKnowledgeFetcher(timeout_sec=CONFIG.internet_timeout_sec)
+    external_fetcher = ExternalKnowledgeFetcher(storage, timeout_sec=CONFIG.internet_timeout_sec, max_queries=CONFIG.max_external_queries, max_retries=CONFIG.internet_max_retries)
     optimizer = IterativeOptimizer(simulation, storage)
     report_writer = ReportWriter(CONFIG.report_dir)
     background_executor = BackgroundExecutor(max_workers=CONFIG.max_workers)

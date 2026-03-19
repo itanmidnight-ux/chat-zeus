@@ -22,6 +22,8 @@ class AppConfig:
     max_workers: int = 2
     worker_poll_interval_ms: int = 200
     internet_timeout_sec: int = 8
+    max_external_queries: int = 36
+    internet_max_retries: int = 3
     max_history_messages: int = 8
     max_inline_context_chars: int = 2000
     max_checkpoint_history: int = 200
