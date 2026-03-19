@@ -13,7 +13,7 @@ class ReportWriter:
         self.report_dir.mkdir(parents=True, exist_ok=True)
 
     def save(self, question: str, payload: dict[str, Any]) -> Path:
-        filename = f"report_{payload.get('simulation', {}).get('run_id', 'session')}_{utc_now_iso().replace(':', '-')}.json"
+        filename = f"report_{payload.get('simulation', {}).get('run_id', 'session')}_{utc_now_iso().replace(':', '-')} .json".replace(' ', '')
         path = self.report_dir / filename
         write_json(path, {'question': question, **payload})
         return path
@@ -28,20 +28,39 @@ class ReportWriter:
             'Análisis completo del problema:',
             payload['analysis'],
             '',
-            'Variables consideradas:',
-            f"- Masa útil: {simulation['payload_mass_kg']} kg",
-            f"- Delta-v estimado: {simulation['delta_v_m_s']} m/s",
-            f"- Altitud máxima simulada: {simulation['max_altitude_m']} m",
-            f"- Alcance simplificado: {simulation['range_m']} m",
-            f"- Tiempo de combustión efectivo: {simulation['burn_time_s']} s",
-            f"- Eficiencia química estimada: {chemistry.get('estimated_efficiency', 'n/d')}",
-            f"- Ejecución reanudada desde checkpoint: {'sí' if simulation.get('resource_profile', {}).get('resumed_from_checkpoint') else 'no'}",
-            '',
-            'Resultados y cálculos relevantes:',
-            f"La simulación ligera por tareas pequeñas predice una velocidad final de {simulation['final_velocity_m_s']} m/s y combustible remanente de {simulation['remaining_fuel_kg']} kg.",
-            f"El análisis termoquímico simplificado estima una presión efectiva de cámara de {chemistry.get('effective_pressure_pa', 'n/d')} Pa y un índice térmico de {chemistry.get('thermal_index', 'n/d')}.",
-            f"El perfil de recursos mantuvo chunk_size={simulation.get('resource_profile', {}).get('chunk_size', 'n/d')} y un tope lógico de {simulation.get('resource_profile', {}).get('max_memory_mb', 'n/d')} MB por tarea.",
-            '',
+        ]
+        if simulation.get('mode') == 'general_analysis':
+            lines.extend([
+                'Marco analítico general:',
+                f"- Tipo de problema: {simulation.get('problem_type', 'n/d')}",
+                f"- Dominios analizados: {', '.join(simulation.get('domains', [])) or 'n/d'}",
+                f"- Profundidad analítica: {simulation.get('analytical_depth', 'n/d')}",
+                f"- Índice de incertidumbre: {simulation.get('uncertainty_index', 'n/d')}",
+                f"- Anchura del análisis: {simulation.get('breadth_score', 'n/d')}",
+                f"- Ejes de decisión: {', '.join(simulation.get('decision_axes', [])) or 'n/d'}",
+                '',
+                'Vacíos inmediatos a validar:',
+                *[f"- {item}" for item in simulation.get('questions_to_validate', [])[:5]],
+                '',
+            ])
+        else:
+            lines.extend([
+                'Variables consideradas:',
+                f"- Masa útil: {simulation['payload_mass_kg']} kg",
+                f"- Delta-v estimado: {simulation['delta_v_m_s']} m/s",
+                f"- Altitud máxima simulada: {simulation['max_altitude_m']} m",
+                f"- Alcance simplificado: {simulation['range_m']} m",
+                f"- Tiempo de combustión efectivo: {simulation['burn_time_s']} s",
+                f"- Eficiencia química estimada: {chemistry.get('estimated_efficiency', 'n/d')}",
+                f"- Ejecución reanudada desde checkpoint: {'sí' if simulation.get('resource_profile', {}).get('resumed_from_checkpoint') else 'no'}",
+                '',
+                'Resultados y cálculos relevantes:',
+                f"La simulación ligera por tareas pequeñas predice una velocidad final de {simulation['final_velocity_m_s']} m/s y combustible remanente de {simulation['remaining_fuel_kg']} kg.",
+                f"El análisis termoquímico simplificado estima una presión efectiva de cámara de {chemistry.get('effective_pressure_pa', 'n/d')} Pa y un índice térmico de {chemistry.get('thermal_index', 'n/d')}.",
+                f"El perfil de recursos mantuvo chunk_size={simulation.get('resource_profile', {}).get('chunk_size', 'n/d')} y un tope lógico de {simulation.get('resource_profile', {}).get('max_memory_mb', 'n/d')} MB por tarea.",
+                '',
+            ])
+        lines.extend([
             'Hipótesis y predicción final:',
             f"- Predicción derivada: {ml['prediction']:.3f}",
             f"- Confianza estimada: {ml['confidence']:.2f}",

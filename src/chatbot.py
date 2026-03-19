@@ -18,6 +18,8 @@ from src.worker import BackgroundExecutor
 
 
 class ChatbotInterface:
+    ENGINEERING_DOMAINS = {'spacecraft', 'physics', 'chemistry', 'materials', 'systems', 'aerospace'}
+
     def __init__(
         self,
         storage: StorageManager,
@@ -94,6 +96,19 @@ class ChatbotInterface:
             f"La siguiente mejora más prometedora es convertir los hallazgos externos y los riesgos detectados en requisitos cuantitativos para nuevas simulaciones y validaciones. "
             'Los resultados son útiles para exploración conceptual avanzada, pero no sustituyen validación de ingeniería de alta fidelidad ni garantizan éxito real del 100 %.'
         )
+        if simulation.get('mode') == 'general_analysis':
+            conclusions = (
+                f"El problema se trató como análisis general y no como una simulación física cerrada. El sistema recomienda profundizar en los ejes {', '.join(simulation.get('decision_axes', [])[:6]) or 'principales'}, "
+                f"resolver primero los vacíos críticos de evidencia y solo después cerrar una respuesta ejecutiva o un plan técnico. "
+                'Esto permite responder preguntas de física, química, matemáticas, geopolítica, ingeniería u otros dominios sin quedar limitado a un solo tipo de problema.'
+            )
+        else:
+            conclusions = (
+                f"Para esta consulta, el diseño analizado alcanza aproximadamente {simulation['max_altitude_m']} m de altitud máxima con un delta-v de {simulation['delta_v_m_s']} m/s. "
+                f"El motor de investigación recomienda trabajar por dominios {', '.join(external.get('domains', [])[:5]) or 'generales'} y priorizar fuentes {', '.join(ml_result.preferred_domains[:4])}. "
+                f"La siguiente mejora más prometedora es convertir los hallazgos externos y los riesgos detectados en requisitos cuantitativos para nuevas simulaciones y validaciones. "
+                'Los resultados son útiles para exploración conceptual avanzada, pero no sustituyen validación de ingeniería de alta fidelidad ni garantizan éxito real del 100 %.'
+            )
         return sanitize_text(analysis), sanitize_text(conclusions)
 
     def _resume_note(self) -> str:
@@ -109,12 +124,19 @@ class ChatbotInterface:
     def answer(self, question: str) -> dict[str, Any]:
         recent_context = self.storage.recent_conversations(limit=CONFIG.max_history_messages)
         knowledge = self.knowledge.retrieve(question, recent_context=recent_context)
+        inferred_domains = self.external_fetcher.infer_domains(question, knowledge.summary)
+        profile = self._profile_question(question, inferred_domains)
         defaults = self._extract_defaults(question)
         run_id = f"sim_{uuid.uuid5(uuid.NAMESPACE_DNS, question).hex[:12]}"
         defaults['run_id'] = run_id
-        simulation_request = self.simulation.build_request(question, defaults)
-        simulation_future = self.background_executor.submit(self.simulation.run, simulation_request, self._progress)
-        simulation = simulation_future.result()
+
+        if profile['requires_simulation']:
+            simulation_request = self.simulation.build_request(question, defaults)
+            simulation_future = self.background_executor.submit(self.simulation.run, simulation_request, self._progress)
+            simulation = simulation_future.result()
+        else:
+            simulation = self._build_general_analysis_frame(question, profile, knowledge.summary, {})
+
         self.ml_model.train_from_result(simulation)
         ml_result = self.ml_model.predict(simulation)
         self.external_fetcher.max_queries = max(self.external_fetcher.max_queries, ml_result.research_intensity)
@@ -128,7 +150,7 @@ class ChatbotInterface:
         )
 
         optimization = None
-        if any(word in question.lower() for word in ['optimiza', 'optimize', 'mejora', 'improve']):
+        if profile['requires_simulation'] and any(word in question.lower() for word in ['optimiza', 'optimize', 'mejora', 'improve']):
             optimization_future = self.background_executor.submit(self.optimizer.optimize, question, 8, self._progress)
             optimization = optimization_future.result()
 
@@ -140,11 +162,13 @@ class ChatbotInterface:
             float(external.get('synthesis', {}).get('quality_score', 0.0)),
         )
 
+        analysis, conclusions = self._build_analysis(knowledge.summary, simulation, external, recent_context, ml_result, profile)
         analysis, conclusions = self._build_analysis(knowledge.summary, simulation, external, recent_context, ml_result)
         analysis = sanitize_text(analysis + self._resume_note())
         payload = {
             'analysis': analysis,
             'conclusions': conclusions,
+            'profile': profile,
             'knowledge': {
                 'summary': knowledge.summary,
                 'formulas': knowledge.formulas,
