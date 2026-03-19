@@ -346,22 +346,16 @@ class ChatbotInterface:
         try:
             return self.answer(question)
         except MemoryError as exc:
-            message = 'Se detectó un fallo de memoria. Reduce el tamaño del problema o los pasos de simulación.'
-            self.logger.error(message)
-            return {'response_text': message, 'error': safe_error_message(exc)}
+            self.logger.error('Se detectó un fallo de memoria; activando respuesta degradada.')
+            return {'response_text': self._fallback_response_text(question, exc), 'error': safe_error_message(exc)}
         except OSError as exc:
             if detect_linker_memory_issue(exc):
-                message = (
-                    'Se detectó saturación de memoria del linker de Android/Termux. '
-                    'El sistema conservó checkpoints; reintenta con menos pasos, menor tamaño de problema o menos dependencias nativas cargadas.'
-                )
-                self.logger.error(message)
-                return {'response_text': message, 'error': safe_error_message(exc)}
+                self.logger.error('Se detectó saturación del linker; activando respuesta degradada.')
+                return {'response_text': self._fallback_response_text(question, exc), 'error': safe_error_message(exc)}
             raise
         except ZeroDivisionError as exc:
-            message = 'Se evitó una división por cero. Revisa parámetros de masa, empuje o velocidad de escape.'
-            self.logger.error(message)
-            return {'response_text': message, 'error': safe_error_message(exc)}
+            self.logger.error('Se evitó una división por cero; activando respuesta degradada.')
+            return {'response_text': self._fallback_response_text(question, exc), 'error': safe_error_message(exc)}
         except Exception as exc:
             self.logger.exception('Error inesperado al responder')
             return {

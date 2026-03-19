@@ -27,6 +27,8 @@ class AppConfig:
     max_history_messages: int = 8
     max_inline_context_chars: int = 2000
     max_checkpoint_history: int = 48
+    hard_step_cap: int = 480
+    checkpoint_retention_per_prefix: int = 24
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
