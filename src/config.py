@@ -32,6 +32,7 @@ class AppConfig:
     max_checkpoint_history: int = 48
     hard_step_cap: int = 480
     checkpoint_retention_per_prefix: int = 24
+    enable_native_ml_backend_probe: bool = os.environ.get('CHAT_ZEUS_ENABLE_NATIVE_ML_BACKEND_PROBE', '').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
