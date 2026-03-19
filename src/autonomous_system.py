@@ -1,19 +1,17 @@
-"""Autonomous cognitive system orchestrating the full bounded pipeline."""
+"""Autonomous reasoning system implementing the requested modular pipeline."""
 from __future__ import annotations
 
-import gc
 from dataclasses import dataclass
 from typing import Any
 
-from src.agents import CriticAgent, MemoryAgent, ReasoningAgent, ResearchAgent, SimulationAgent
-from src.chatbot import build_final_answer
-from src.core.decomposer import decompose_problem
-from src.core.experiment import run_experiments
-from src.core.planner import prioritize_tasks
-from src.storage import StorageManager
+from src.config import CONFIG
+from src.core.executor import TaskExecutor
+from src.core.intent import detect_intent_advanced
+from src.core.learning import LearningEngine
+from src.core.memory import LightweightMemory
+from src.engines.fact_engine import FactEngine
 from src.utils.filters import clean_input, clean_output
 from src.utils.handlers import handle_simple_queries
-from src.utils.intent import classify_intent as classify_english_intent
 
 
 @dataclass
@@ -29,43 +27,41 @@ class AutonomousResult:
 
 
 class AutonomousReasoningSystem:
-    def __init__(self, storage: StorageManager, memory_agent: MemoryAgent):
-        self.storage = storage
-        self.memory_agent = memory_agent
-        self.research_agent = ResearchAgent(storage)
-        self.reasoning_agent = ReasoningAgent()
-        self.simulation_agent = SimulationAgent()
-        self.critic_agent = CriticAgent()
+    def __init__(self, *_: Any, memory_path=None, **__: Any):
+        path = memory_path or (CONFIG.models_dir / 'agent_memory.json')
+        self.memory_store = LightweightMemory(path)
+        self.learning_engine = LearningEngine(self.memory_store, timeout=CONFIG.internet_timeout_sec)
+        self.fact_engine = FactEngine(self.learning_engine)
+        self.executor = TaskExecutor(self.fact_engine)
+
+    def main_pipeline(self, question: str) -> str:
+        cleaned = clean_input(question)
+        direct = handle_simple_queries(cleaned)
+        if direct:
+            return clean_output(direct)
+        intent = detect_intent_advanced(cleaned)
+        result = self.executor.execute_task(intent, cleaned)
+        if not result:
+            result = self.learning_engine.search_and_learn(cleaned)
+        if not result:
+            result = 'No encontré una respuesta suficiente.'
+        bucket = 'facts' if intent == 'fact' else 'solutions'
+        self.memory_store.put(bucket, cleaned, clean_output(result), source='pipeline')
+        return clean_output(result)
 
     def process(self, question: str) -> AutonomousResult:
-        normalized = clean_input(question)
-        try:
-            direct = handle_simple_queries(normalized)
-            if direct:
-                response = clean_output(direct)
-                return AutonomousResult(normalized, 'simple', [], [], {}, {'proposal': direct, 'final_score': 1.0, 'task': 'direct'}, self.memory_agent.load(), response)
-
-            intent = classify_english_intent(normalized)
-            tasks = decompose_problem(normalized)
-            plan = prioritize_tasks(tasks, question=normalized)
-
-            research_blocks = [self.research_agent.research(item) for item in tasks[:5]]
-            research = {
-                'findings': research_blocks,
-                'summary': ' '.join(' '.join(fact.get('fact', '') for fact in block.get('facts', [])[:1]) for block in research_blocks).strip(),
-            }
-
-            hypotheses: list[dict[str, Any]] = []
-            for task in tasks[:5]:
-                hypotheses.extend(self.reasoning_agent.reason({'topic': task, 'keywords': [task], 'research': research}))
-            hypotheses = hypotheses[:10] or self.reasoning_agent.reason({'topic': normalized, 'keywords': tasks[:3], 'research': research})
-
-            best_solution = run_experiments(hypotheses, max_iterations=5)
-            memory = self.memory_agent.update_memory({**best_solution, 'question': normalized, 'intent': intent})
-            response = clean_output(build_final_answer(intent, best_solution))
-            gc.collect()
-            return AutonomousResult(normalized, intent, tasks, plan, research, best_solution, memory, response)
-        except Exception:
-            fallback = 'La mejor opción es avanzar con una solución simple, segura y verificable.'
-            gc.collect()
-            return AutonomousResult(normalized, 'simple', [], [], {}, {'proposal': fallback, 'final_score': 0.0, 'task': 'fallback'}, self.memory_agent.load(), clean_output(fallback))
+        cleaned = clean_input(question)
+        direct = handle_simple_queries(cleaned)
+        intent = 'simple' if direct else detect_intent_advanced(cleaned)
+        response = clean_output(direct or self.main_pipeline(cleaned))
+        best_solution = {'task': intent, 'proposal': response, 'final_score': 1.0}
+        return AutonomousResult(
+            question=cleaned,
+            intent=intent,
+            tasks=[intent],
+            plan=[{'step': 'main_pipeline', 'status': 'completed'}],
+            research={'used_learning': intent == 'fact'},
+            best_solution=best_solution,
+            memory=self.memory_store.export(),
+            response_text=response,
+        )
