@@ -63,6 +63,8 @@ class StorageManager:
                     ('Arrastre aerodinámico', 'physics', 'F_d = 0.5 * rho * Cd * A * v^2. Aproximación básica para atmósferas densas.', 'local_seed'),
                     ('Energía cinética', 'physics', 'E_k = 0.5 * m * v^2. Sirve para estimar energía asociada al movimiento.', 'local_seed'),
                     ('Gas ideal', 'thermo', 'P * V = n * R * T. Aproximación termodinámica básica para gases.', 'local_seed'),
+                    ('Propulsión química', 'chemistry', 'La energía específica y la relación de mezcla afectan empuje, temperatura de cámara e impulso específico.', 'local_seed'),
+                    ('Trayectoria balística simplificada', 'physics', 'El alcance depende de velocidad inicial, gravedad, drag y tiempo de combustión efectivo.', 'local_seed'),
                 ]
                 conn.executemany(
                     'INSERT INTO knowledge_documents(title, category, content, source, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -73,11 +75,11 @@ class StorageManager:
         keywords = [word.strip().lower() for word in query.split() if len(word.strip()) > 2][:8]
         if not keywords:
             return []
-        clauses = ' OR '.join(['lower(title) LIKE ? OR lower(content) LIKE ?' for _ in keywords])
+        clauses = ' OR '.join(['lower(title) LIKE ? OR lower(content) LIKE ? OR lower(category) LIKE ?' for _ in keywords])
         values: list[str] = []
         for keyword in keywords:
             like = f'%{keyword}%'
-            values.extend([like, like])
+            values.extend([like, like, like])
         sql = f'SELECT title, category, content, source FROM knowledge_documents WHERE {clauses} LIMIT ?'
         with self._connect() as conn:
             rows = conn.execute(sql, (*values, limit)).fetchall()

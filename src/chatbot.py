@@ -5,6 +5,7 @@ import json
 import re
 from typing import Any
 
+from src.config import CONFIG
 from src.external import ExternalKnowledgeFetcher
 from src.knowledge import KnowledgeManager
 from src.ml import LightweightMLModel
@@ -12,7 +13,7 @@ from src.optimizer import IterativeOptimizer
 from src.reporting import ReportWriter
 from src.simulation import SimulationEngine
 from src.storage import StorageManager
-from src.utils import safe_error_message
+from src.utils import safe_error_message, sanitize_text
 
 
 class ChatbotInterface:
@@ -44,6 +45,7 @@ class ChatbotInterface:
             'dry_mass_kg': r'dry\s*=\s*([0-9]+(?:\.[0-9]+)?)',
             'thrust_n': r'thrust\s*=\s*([0-9]+(?:\.[0-9]+)?)',
             'steps': r'steps\s*=\s*([0-9]+)',
+            'mixture_ratio': r'(?:mixture|mezcla)\s*=\s*([0-9]+(?:\.[0-9]+)?)',
         }
         for key, pattern in patterns.items():
             match = re.search(pattern, question, re.IGNORECASE)
@@ -54,7 +56,24 @@ class ChatbotInterface:
 
     def _progress(self, run_id: str, progress: float) -> None:
         self.logger.info('Progreso %s: %.1f%%', run_id, progress * 100)
-        print(f'[progreso] {run_id}: {progress * 100:.1f}%')
+
+    def _build_analysis(self, question: str, knowledge_summary: str, simulation: dict[str, Any], external: dict[str, Any], recent_context: list[dict[str, Any]]) -> tuple[str, str]:
+        context_hint = ''
+        if recent_context:
+            context_hint = f" El historial reciente contiene {len(recent_context)} intercambios y se usó para mantener continuidad temática sin exponer pasos internos."
+        analysis = (
+            'Se combinó recuperación local de conocimiento científico, una simulación silenciosa de ascenso y trayectoria simplificada, '
+            'estimaciones básicas de gravedad, arrastre, propulsión y termodinámica, además de una capa de aprendizaje incremental con checkpoints persistentes.'
+            f' Resumen RAG: {knowledge_summary}.{context_hint}'
+            f" La corrida activa {simulation['run_id']} se ejecutó en bloques pequeños para respetar límites de memoria de Termux."
+            f" El apoyo externo terminó con estado {external['status']}."
+        )
+        conclusions = (
+            f"Para esta consulta, el diseño analizado alcanza aproximadamente {simulation['max_altitude_m']} m de altitud máxima con un delta-v de {simulation['delta_v_m_s']} m/s. "
+            f"El modelo sugiere que la siguiente mejora más prometedora sería optimizar simultáneamente masa estructural, relación de mezcla y empuje para elevar el margen energético sin disparar el drag. "
+            'Los resultados son útiles para exploración conceptual en Termux, pero no sustituyen validación de ingeniería de alta fidelidad.'
+        )
+        return sanitize_text(analysis), sanitize_text(conclusions)
 
     def answer(self, question: str) -> dict[str, Any]:
         knowledge = self.knowledge.retrieve(question)
@@ -69,14 +88,15 @@ class ChatbotInterface:
         if any(word in question.lower() for word in ['optimiza', 'optimize', 'mejora', 'improve']):
             optimization = self.optimizer.optimize(question, progress_callback=self._progress)
 
-        analysis = (
-            'Se combinó conocimiento local, una simulación de ascenso vertical simplificada, '
-            'estimaciones de arrastre y una heurística de aprendizaje incremental. '
-            f"Resumen RAG: {knowledge.summary}"
-        )
+        recent_context = self.storage.recent_conversations(limit=CONFIG.max_history_messages)
+        analysis, conclusions = self._build_analysis(question, knowledge.summary, simulation, external, recent_context)
         payload = {
             'analysis': analysis,
-            'knowledge': knowledge.summary,
+            'conclusions': conclusions,
+            'knowledge': {
+                'summary': knowledge.summary,
+                'formulas': knowledge.formulas,
+            },
             'simulation': simulation,
             'ml': {
                 'prediction': ml_result.prediction,
@@ -85,7 +105,7 @@ class ChatbotInterface:
             },
             'external': external,
             'optimization': optimization,
-            'recent_context': self.storage.recent_conversations(limit=3),
+            'recent_context': [{'question': item['question'], 'created_at': item['created_at']} for item in recent_context[:3]],
         }
         report_path = self.report_writer.save(question, payload)
         response_text = self.report_writer.render_text(payload)
@@ -108,6 +128,6 @@ class ChatbotInterface:
         except Exception as exc:
             self.logger.exception('Error inesperado al responder')
             return {
-                'response_text': 'Ocurrió un error recuperable; consulta el log y reintenta con un problema más acotado.',
+                'response_text': 'Ocurrió un error recuperable; el sistema mantuvo su estado y puedes reintentar con un problema más acotado.',
                 'error': safe_error_message(exc),
             }

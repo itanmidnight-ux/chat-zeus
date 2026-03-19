@@ -1,7 +1,6 @@
 """Generación de reportes JSON y texto legible para el usuario."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -23,30 +22,46 @@ class ReportWriter:
         simulation = payload['simulation']
         ml = payload['ml']
         external = payload['external']
+        chemistry = simulation.get('chemistry', {})
         lines = [
-            '=== Análisis completo ===',
+            'Análisis completo del problema:',
             payload['analysis'],
             '',
-            '=== Parámetros principales ===',
-            f"payload_mass_kg={simulation['payload_mass_kg']}",
-            f"delta_v_m_s={simulation['delta_v_m_s']}",
-            f"max_altitude_m={simulation['max_altitude_m']}",
-            f"range_m={simulation['range_m']}",
-            f"burn_time_s={simulation['burn_time_s']}",
+            'Variables consideradas:',
+            f"- Masa útil: {simulation['payload_mass_kg']} kg",
+            f"- Delta-v estimado: {simulation['delta_v_m_s']} m/s",
+            f"- Altitud máxima simulada: {simulation['max_altitude_m']} m",
+            f"- Alcance simplificado: {simulation['range_m']} m",
+            f"- Tiempo de combustión efectivo: {simulation['burn_time_s']} s",
+            f"- Eficiencia química estimada: {chemistry.get('estimated_efficiency', 'n/d')}",
             '',
-            '=== Hipótesis y predicción ===',
-            f"Predicción derivada={ml['prediction']:.3f}, confianza={ml['confidence']:.2f}",
+            'Resultados y cálculos relevantes:',
+            f"La simulación ligera por tareas pequeñas predice una velocidad final de {simulation['final_velocity_m_s']} m/s y combustible remanente de {simulation['remaining_fuel_kg']} kg.",
+            f"El análisis termoquímico simplificado estima una presión efectiva de cámara de {chemistry.get('effective_pressure_pa', 'n/d')} Pa y un índice térmico de {chemistry.get('thermal_index', 'n/d')}.",
+            '',
+            'Hipótesis y predicción final:',
+            f"- Predicción derivada: {ml['prediction']:.3f}",
+            f"- Confianza estimada: {ml['confidence']:.2f}",
             *[f'- {item}' for item in ml['hypotheses']],
             '',
-            '=== Consulta externa ===',
-            f"estado={external['status']}",
-            f"fuente={external['source']}",
-            f"extracto={external['excerpt']}",
+            'Recomendaciones y conclusiones:',
+            payload['conclusions'],
+            '',
+            'Complemento externo:',
+            f"- Estado: {external['status']}",
+            f"- Fuente: {external['source']}",
+            f"- Extracto útil: {external['excerpt']}",
         ]
         if payload.get('optimization'):
+            optimization = payload['optimization']
+            best_result = optimization.get('best_result', {})
             lines.extend([
                 '',
-                '=== Optimización iterativa ===',
-                json.dumps(payload['optimization'], indent=2, ensure_ascii=False),
+                'Optimización iterativa:',
+                f"- Iteraciones: {optimization.get('iterations')}",
+                f"- Objetivo: {optimization.get('objective')}",
+                f"- Mejor puntuación: {optimization.get('best_score')}",
+                f"- Mejor altitud hallada: {best_result.get('max_altitude_m', 'n/d')} m",
+                f"- Mejor delta-v hallado: {best_result.get('delta_v_m_s', 'n/d')} m/s",
             ])
         return '\n'.join(lines)

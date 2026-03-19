@@ -1,9 +1,10 @@
 """Búsqueda externa opcional con degradación elegante si no hay red."""
 from __future__ import annotations
 
-import urllib.parse
-import urllib.request
+import json
 from typing import Any
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 
 class ExternalKnowledgeFetcher:
@@ -11,19 +12,28 @@ class ExternalKnowledgeFetcher:
         self.timeout_sec = timeout_sec
 
     def fetch_formula_hint(self, query: str) -> dict[str, Any]:
-        url = 'https://api.duckduckgo.com/?' + urllib.parse.urlencode({
+        url = 'https://api.duckduckgo.com/?' + urlencode({
             'q': query,
             'format': 'json',
             'no_html': 1,
             'skip_disambig': 1,
         })
         try:
-            with urllib.request.urlopen(url, timeout=self.timeout_sec) as response:
-                payload = response.read().decode('utf-8', errors='replace')
+            with urlopen(url, timeout=self.timeout_sec) as response:
+                raw = response.read().decode('utf-8', errors='replace')
+            payload = json.loads(raw)
+            abstract = (payload.get('AbstractText') or payload.get('Answer') or payload.get('Heading') or '').strip()
+            related = payload.get('RelatedTopics') or []
+            related_excerpt = ''
+            if not abstract and related:
+                first = related[0]
+                if isinstance(first, dict):
+                    related_excerpt = (first.get('Text') or '')[:240]
+            excerpt = abstract[:400] if abstract else related_excerpt or 'Sin extracto útil; solo se confirmó accesibilidad externa.'
             return {
                 'status': 'ok',
                 'source': url,
-                'excerpt': payload[:500],
+                'excerpt': excerpt,
             }
         except Exception as exc:
             return {

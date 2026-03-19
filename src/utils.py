@@ -1,8 +1,10 @@
-"""Utilidades generales de E/S, JSON y manejo de errores."""
+"""Utilidades generales de E/S, JSON, texto y manejo de errores."""
 from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,10 +26,7 @@ def setup_logging(log_dir: Path) -> logging.Logger:
     file_handler = logging.FileHandler(log_dir / 'chat_zeus.log', encoding='utf-8')
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+    logger.propagate = False
     return logger
 
 
@@ -53,3 +52,20 @@ def safe_error_message(exc: Exception) -> str:
 
 def format_exception(exc: Exception) -> str:
     return ''.join(traceback.format_exception(exc))
+
+
+def clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def sanitize_text(text: str) -> str:
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def soft_memory_limit_bytes(megabytes: int) -> int:
+    return max(32, megabytes) * 1024 * 1024
+
+
+def ensure_environment_defaults() -> None:
+    os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
+    os.environ.setdefault('PYTHONUNBUFFERED', '1')
