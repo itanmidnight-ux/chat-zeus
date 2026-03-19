@@ -89,6 +89,9 @@ def ensure_environment_defaults() -> None:
     os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
     os.environ.setdefault('MKL_NUM_THREADS', '1')
     os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
+    os.environ.setdefault('VECLIB_MAXIMUM_THREADS', '1')
+    os.environ.setdefault('BLIS_NUM_THREADS', '1')
+    os.environ.setdefault('MALLOC_ARENA_MAX', '2')
 
 
 def apply_soft_memory_limit(megabytes: int) -> None:

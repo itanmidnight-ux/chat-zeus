@@ -20,6 +20,10 @@ class StorageManager:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA synchronous=NORMAL')
+        conn.execute('PRAGMA temp_store=FILE')
+        conn.execute('PRAGMA cache_size=-2048')
         return conn
 
     def _init_db(self) -> None:
@@ -169,10 +173,35 @@ class StorageManager:
                 (features_json, target, utc_now_iso()),
             )
 
-    def load_ml_observations(self) -> list[dict[str, Any]]:
+    def load_ml_observations(self, limit: int | None = None) -> list[dict[str, Any]]:
+        sql = 'SELECT features_json, target FROM ml_observations ORDER BY id DESC'
+        params: tuple[Any, ...] = ()
+        if limit is not None:
+            sql += ' LIMIT ?'
+            params = (max(1, int(limit)),)
         with self._connect() as conn:
-            rows = conn.execute('SELECT features_json, target FROM ml_observations ORDER BY id ASC').fetchall()
-        return [dict(row) for row in rows]
+            rows = conn.execute(sql, params).fetchall()
+        payload = [dict(row) for row in rows]
+        payload.reverse()
+        return payload
+
+    def ml_observation_summary(self) -> dict[str, float]:
+        with self._connect() as conn:
+            row = conn.execute(
+                '''
+                SELECT COUNT(*) AS samples_seen,
+                       AVG(target) AS avg_target,
+                       MIN(target) AS min_target,
+                       MAX(target) AS max_target
+                FROM ml_observations
+                '''
+            ).fetchone()
+        return {
+            'samples_seen': float(row['samples_seen'] or 0.0),
+            'avg_target': float(row['avg_target'] or 0.0),
+            'min_target': float(row['min_target'] or 0.0),
+            'max_target': float(row['max_target'] or 0.0),
+        }
 
     def save_research_session(self, question: str, profile_json: str, findings_count: int, quality_score: float) -> None:
         created_at = utc_now_iso()
