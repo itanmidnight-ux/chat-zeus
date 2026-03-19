@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from src.chatbot import ChatbotInterface
+from src.autonomous_system import AutonomousReasoningSystem
+from src.agents.memory import MemoryAgent
 from src.calculator import AnalyticalCalculator
 from src.config import CONFIG, ensure_directories
 from src.external import ExternalKnowledgeFetcher
@@ -35,7 +37,9 @@ def build_app() -> ChatbotInterface:
     optimizer = IterativeOptimizer(simulation, storage)
     report_writer = ReportWriter(CONFIG.report_dir)
     background_executor = BackgroundExecutor(max_workers=CONFIG.max_workers)
-    return ChatbotInterface(storage, knowledge, simulation, calculator, ml_model, external_fetcher, optimizer, report_writer, background_executor, logger)
+    memory_agent = MemoryAgent(storage, CONFIG.models_dir / 'autonomous_memory.json')
+    autonomous_system = AutonomousReasoningSystem(storage, memory_agent)
+    return ChatbotInterface(storage, autonomous_system, background_executor, logger, knowledge, simulation, calculator, ml_model, external_fetcher, optimizer, report_writer)
 
 
 def main() -> None:
