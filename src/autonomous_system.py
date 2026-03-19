@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from src.agents.memory import MemoryAgent
+from src.cognitive_system import CognitiveSystem
 from src.config import CONFIG
 from src.core.confidence import ConfidenceEngine
 from src.core.decision import DecisionEngine
@@ -89,6 +90,13 @@ class AutonomousReasoningSystem:
         self.episode_learner = EpisodeLearner(self.storage)
         self.session_context = SessionContext(self.memory_store)
         self.clarifier = ClarificationEngine()
+        self.cognitive_system = CognitiveSystem(
+            storage=self.storage,
+            long_term_memory=self.memory_store,
+            task_executor=self.executor,
+            learning_engine=self.learning_engine,
+            max_history=CONFIG.max_history_messages,
+        )
 
     def _memory_lookup(self, understanding: UnderstandingResult) -> dict[str, Any] | None:
         for bucket in ('facts', 'solutions', 'patterns'):
@@ -119,6 +127,7 @@ class AutonomousReasoningSystem:
     def process(self, question: str) -> AutonomousResult:
         started = time.perf_counter()
         cleaned = clean_input(question)
+        cognitive_result = self.cognitive_system.process(cleaned)
         understanding = self.understanding.analyze(cleaned)
         self.session_context.update_from_understanding(understanding)
         context = self.session_context.recall(cleaned)
@@ -142,6 +151,9 @@ class AutonomousReasoningSystem:
         route = decision.route
         engine = 'conversation' if understanding.selected_intent == 'conversation' else decision.engine
         response, sources = self._execute_plan(engine, cleaned, context)
+        if cognitive_result.response_text and understanding.selected_intent in {'creation', 'analysis', 'clarification_needed'}:
+            response = cognitive_result.response_text
+            sources = list({*sources, *[item.get('source', 'local') for item in cognitive_result.research.get('findings', []) if isinstance(item, dict)]})
         if not response and route != 'retrieve':
             response = self.learning_engine.search_and_learn(cleaned)
             sources.append('internet')
@@ -231,3 +243,8 @@ class AutonomousReasoningSystem:
             memory=self.memory_store.export(),
             response_text=response,
         )
+
+    def main_pipeline(self, question: str) -> str:
+        """Compatibility wrapper exposing the full cognitive loop as plain text."""
+        result = self.process(question)
+        return result.response_text
