@@ -34,7 +34,7 @@ class TermuxUI:
         p = self.palette
         return (
             f"{p.bold}{p.accent}Chat Zeus Termux{p.reset}\n"
-            f"{p.subtle}Consulta científica, técnica o general. Usa parámetros como payload=120 thrust=18000 y escribe 'salir' para terminar.{p.reset}"
+            f"{p.subtle}Haz tu pregunta cuando quieras. Soporta análisis general, matemáticas, física, química, geología e ingeniería. Usa parámetros como payload=120 thrust=18000 y escribe 'salir' para terminar.{p.reset}"
         )
 
     def render_response(self, text: str) -> str:
