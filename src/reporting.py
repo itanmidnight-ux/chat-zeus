@@ -25,6 +25,7 @@ class ReportWriter:
         calculations = payload.get('calculations', {})
         chemistry = simulation.get('chemistry', {})
         synthesis = external.get('synthesis', {})
+        top_hypotheses = ml.get('hypotheses', [])[:4]
         lines = [
             'Análisis completo del problema:',
             payload['analysis'],
@@ -68,9 +69,7 @@ class ReportWriter:
             f"- Confianza estimada: {ml['confidence']:.2f}",
             f"- Intensidad de investigación sugerida por ML: {ml.get('research_intensity', 'n/d')} búsquedas",
             f"- Fuentes priorizadas por ML: {', '.join(ml.get('preferred_domains', [])) or 'n/d'}",
-            f"- Pesos actuales por fuente: {ml.get('source_weights', {})}",
-            f"- Estado interno del modelo: {ml.get('model_state', {})}",
-            *[f'- {item}' for item in ml['hypotheses']],
+            *[f'- {item}' for item in top_hypotheses],
             '',
             'Síntesis de investigación externa:',
             f"- Estado: {external['status']}",
@@ -82,7 +81,6 @@ class ReportWriter:
             f"- Calidad media de evidencia: {synthesis.get('quality_score', 'n/d')}",
             f"- Fuente destacada: {external['source']}",
             f"- Extracto útil: {external['excerpt']}",
-            f"- Perfil de conectividad: {synthesis.get('connectivity_profile', {})}",
         ])
         if synthesis.get('contradictions'):
             lines.extend(['', 'Contradicciones o cautelas detectadas:'])

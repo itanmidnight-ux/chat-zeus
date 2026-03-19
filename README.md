@@ -4,7 +4,7 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
 
 ## Características principales
 
-- **Salida silenciosa**: la terminal muestra un encabezado ligero, un prompt claro para escribir y luego solo la respuesta final en texto plano para cada pregunta.
+- **Salida silenciosa**: la terminal muestra un encabezado ligero, un prompt claro para escribir y luego solo la respuesta final en texto plano para cada pregunta, sin exponer pesos internos del ML ni logs de simulación.
 - **Persistencia transparente**: checkpoints JSON y base SQLite para historial, conocimiento, aprendizaje y reanudación.
 - **Reanudación tras reinicios**: cada corrida usa `run_id` estable derivado de la pregunta, de modo que puede continuar después de cerrar Termux o reiniciar Android.
 - **RAG local + investigación web multi-fuente profesional**: recuperación local de fórmulas y conceptos, más búsquedas orquestadas en fuentes abiertas como Wikipedia, Crossref, arXiv y DuckDuckGo, con planificación por dominios, cobertura por intenciones, puntuación de evidencia y síntesis de riesgos.
@@ -30,7 +30,7 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
 - `src/optimizer.py`: optimización iterativa por muestreo ligero.
 - `src/reporting.py`: generación de la respuesta final en texto plano y reportes JSON.
 - `src/termux_ui.py`: interfaz textual ligera con prompt claro y salida limpia para Termux.
-- `src/worker.py`: ejecutor silencioso de tareas en segundo plano, limitado a pocos workers.
+- `src/worker.py`: ejecutor silencioso de tareas en segundo plano, limitado a pocos workers y con degradación síncrona si el entorno no puede crear más hilos.
 - `data/chatbot/`, `data/models/`, `data/data/`, `data/logs/`: carpetas compatibles con el flujo pedido.
 
 ## Instalación en Termux
@@ -56,7 +56,7 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
 
 ## Uso
 
-Cada línea de entrada se interpreta como una consulta nueva. El programa mantiene contexto reciente en SQLite y devuelve **solo la respuesta final**.
+Cada línea de entrada se interpreta como una consulta nueva. El programa mantiene contexto reciente en SQLite y devuelve **solo la respuesta final**, ocultando detalles internos de entrenamiento, checkpoints, logs y estados del motor.
 
 Para consultas sencillas, el motor limita automáticamente la cantidad de búsquedas externas para evitar esperas excesivas en Termux; para consultas complejas amplía el presupuesto de investigación de forma adaptativa.
 
