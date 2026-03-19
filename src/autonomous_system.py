@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+import re
 import time
 from typing import Any
 
@@ -60,6 +62,90 @@ class SessionContext:
         return context
 
 
+class SimpleIntentRouter:
+    """Strict low-latency router for intents that must bypass the full pipeline."""
+
+    _GREETING_RE = re.compile(r"^(hola|buenas|hello|hi|hey)(?:[!. ]*)$")
+    _TIME_RE = re.compile(r"\b(?:qué hora es|que hora es|hora actual|current time|time now)\b")
+    _DATE_RE = re.compile(r"\b(?:qué fecha es|que fecha es|fecha de hoy|hoy es|current date|today'?s date|date today)\b")
+    _IDENTITY_RE = re.compile(r"\b(?:quién eres|quien eres|tu nombre|your name|who are you)\b")
+    _MEMORY_NAME_RE = re.compile(r"\b(?:cómo me llamo|como me llamo|cuál es mi nombre|cual es mi nombre|what is my name)\b")
+
+    def route(self, question: str, context: dict[str, str], memory_store: LightweightMemory) -> tuple[str, str] | None:
+        text = clean_input(question)
+        if not text:
+            return 'conversation', 'Hola. ¿En qué puedo ayudarte?'
+        lowered = text.lower()
+        if self._GREETING_RE.search(lowered):
+            name = context.get('name')
+            return 'conversation', f'Hola{", " + name if name else ""}. ¿En qué puedo ayudarte?'
+        if self._TIME_RE.search(lowered):
+            return 'time', f'Son las {self.get_time()}.'
+        if self._DATE_RE.search(lowered):
+            return 'date', f'La fecha es {self.get_date()}.'
+        if self._IDENTITY_RE.search(lowered):
+            assistant_name = context.get('assistant_name', 'Chat Zeus')
+            return 'identity', f'Soy {assistant_name}, un asistente científico con memoria de sesión y razonamiento estructurado.'
+        if self._MEMORY_NAME_RE.search(lowered):
+            stored = context.get('name') or self._memory_name(memory_store)
+            if stored:
+                return 'identity', f'Te llamas {stored}.'
+            return 'identity', 'Aún no me has dicho tu nombre.'
+        return None
+
+    @staticmethod
+    def get_time() -> str:
+        return datetime.now().strftime('%H:%M:%S')
+
+    @staticmethod
+    def get_date() -> str:
+        return datetime.now().strftime('%Y-%m-%d')
+
+    @staticmethod
+    def _memory_name(memory_store: LightweightMemory) -> str | None:
+        item = memory_store.get('facts', 'user_profile:name')
+        if not item:
+            return None
+        value = str(item.get('value', '')).strip()
+        return value or None
+
+
+class ResponseFinalizer:
+    """Produce only final user-facing answers and reject noisy/unrelated text."""
+
+    _NOISE_PATTERNS = (
+        'confianza estimada', 'análisis completo', 'analysis:', 'plan:',
+        'logs', 'checkpoints', 'ml weights', 'random fact', 'artículo relacionado', 'related article',
+    )
+
+    def finalize(self, question: str, response: str, *, fallback: str | None = None) -> str:
+        cleaned = clean_output(response or '')
+        cleaned = re.sub(r'\bConfianza estimada:[^.]+\.?', ' ', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        if self._is_unrelated(question, cleaned):
+            cleaned = clean_output(fallback or '')
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        if self._is_unrelated(question, cleaned):
+            return 'No pude generar una respuesta final útil con la información disponible.'
+        return cleaned or 'No pude generar una respuesta final útil con la información disponible.'
+
+    def _is_unrelated(self, question: str, response: str) -> bool:
+        if not response:
+            return True
+        lowered = response.lower()
+        if any(marker in lowered for marker in self._NOISE_PATTERNS):
+            return True
+        q_tokens = {token for token in re.findall(r'[a-záéíóúñ0-9]{3,}', question.lower())}
+        r_tokens = {token for token in re.findall(r'[a-záéíóúñ0-9]{3,}', lowered)}
+        if not q_tokens:
+            return False
+        overlap = q_tokens & r_tokens
+        simple_queries = {'hola', 'hora', 'fecha', 'nombre', 'llamo', 'eres'}
+        if overlap:
+            return False
+        return len(q_tokens - simple_queries) >= 2
+
+
 class ClarificationEngine:
     def needs_clarification(self, understanding: UnderstandingResult, question: str) -> str | None:
         text = question.strip()
@@ -89,6 +175,8 @@ class AutonomousReasoningSystem:
         self.confidence_engine = ConfidenceEngine()
         self.episode_learner = EpisodeLearner(self.storage)
         self.session_context = SessionContext(self.memory_store)
+        self.simple_router = SimpleIntentRouter()
+        self.finalizer = ResponseFinalizer()
         self.clarifier = ClarificationEngine()
         self.cognitive_system = CognitiveSystem(
             storage=self.storage,
@@ -127,10 +215,28 @@ class AutonomousReasoningSystem:
     def process(self, question: str) -> AutonomousResult:
         started = time.perf_counter()
         cleaned = clean_input(question)
-        cognitive_result = self.cognitive_system.process(cleaned)
         understanding = self.understanding.analyze(cleaned)
         self.session_context.update_from_understanding(understanding)
         context = self.session_context.recall(cleaned)
+
+        direct_route = self.simple_router.route(cleaned, context, self.memory_store)
+        if direct_route is not None:
+            intent, response = direct_route
+            response = self.finalizer.finalize(cleaned, response)
+            self.memory_store.put('facts', cleaned, response, source='simple_router')
+            self.session_context.register_turn(cleaned, response)
+            return AutonomousResult(
+                question=cleaned,
+                intent=intent,
+                tasks=[intent],
+                plan=[{'step': 'route_simple_intent', 'status': 'completed'}],
+                research={'used_learning': False, 'sources': [], 'requires_freshness': False},
+                best_solution={'task': intent, 'proposal': response, 'final_score': 0.99, 'route': 'simple_router'},
+                memory=self.memory_store.export(),
+                response_text=response,
+            )
+
+        cognitive_result = self.cognitive_system.process(cleaned)
 
         clarification = self.clarifier.needs_clarification(understanding, cleaned)
         if clarification:
@@ -176,8 +282,9 @@ class AutonomousReasoningSystem:
             failure_penalty=failure_penalty,
         )
         quality_score = round((verification.score * 0.55 + confidence.score * 0.45), 4)
-        if confidence.band in {'low', 'very_low'} and 'Confianza estimada' not in response:
-            response = f'{response} Confianza estimada: {confidence.band}; si es importante, conviene verificar los puntos clave.'
+
+        fallback_response = cognitive_result.response_text if cognitive_result.response_text and cognitive_result.response_text != response else None
+        response = self.finalizer.finalize(cleaned, response, fallback=fallback_response)
 
         best_solution = {
             'task': understanding.selected_intent,

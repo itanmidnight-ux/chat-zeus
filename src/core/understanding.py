@@ -22,6 +22,9 @@ _CONVERSATION_WORDS = {
     'how are you', 'como estas', 'cómo estás', 'nice to meet you', 'encantado',
 }
 _IDENTITY_WORDS = {'who are you', 'quien eres', 'quién eres', 'your name', 'tu nombre'}
+_TIME_WORDS = {'qué hora es', 'que hora es', 'hora actual', 'current time', 'time now'}
+_DATE_WORDS = {'qué fecha es', 'que fecha es', 'fecha de hoy', 'hoy es', 'current date', "today's date", 'date today'}
+_MEMORY_WORDS = {'cómo me llamo', 'como me llamo', 'cuál es mi nombre', 'cual es mi nombre', 'what is my name'}
 _CLARIFY_CUES = {'help', 'ayuda', 'something', 'algo', 'this', 'esto', 'that', 'eso'}
 _MATH_RE = re.compile(r'(?:(?:\d+[\d\s+\-*/().,^%]*)|(?:[+\-/*().%^\s]+\d)){3,}')
 _ENTITY_RE = re.compile(r"\b[a-záéíóúñ0-9]{2,}\b", re.IGNORECASE)
@@ -46,7 +49,7 @@ class UnderstandingResult:
 class SemanticUnderstandingEngine:
     """Intent inference that tolerates imperfect input and extracts lightweight user context."""
 
-    INTENTS = ('conversation', 'math', 'fact', 'creation', 'identity', 'clarification_needed', 'analysis', 'execution', 'simple')
+    INTENTS = ('conversation', 'math', 'fact', 'creation', 'identity', 'time', 'date', 'clarification_needed', 'analysis', 'execution', 'simple')
 
     def analyze(self, question: str) -> UnderstandingResult:
         text = clean_input(question)
@@ -67,6 +70,15 @@ class SemanticUnderstandingEngine:
         if identity_detected:
             scores['identity'] += 0.88
             scores['conversation'] = max(scores['conversation'] - 0.12, 0.03)
+        if any(phrase in text for phrase in _TIME_WORDS):
+            scores['time'] += 0.96
+            scores['simple'] += 0.35
+        if any(phrase in text for phrase in _DATE_WORDS):
+            scores['date'] += 0.96
+            scores['simple'] += 0.35
+        if any(phrase in text for phrase in _MEMORY_WORDS):
+            scores['identity'] += 0.82
+            scores['simple'] += 0.28
         if any(word in joined for word in (f' {w} ' for w in _FACT_WORDS)) or '?' in text:
             scores['fact'] += 0.48
         if any(word in text for word in ('python:', 'code:', 'run ', 'execute ', 'script')):
