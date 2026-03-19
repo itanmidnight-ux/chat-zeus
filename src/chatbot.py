@@ -19,6 +19,11 @@ from src.worker import BackgroundExecutor
 
 class ChatbotInterface:
     ENGINEERING_DOMAINS = {'spacecraft', 'physics', 'chemistry', 'materials', 'systems', 'aerospace'}
+    SIMULATION_KEYWORDS = {
+        'cohete', 'rocket', 'lanzador', 'orbita', 'orbital', 'trayectoria', 'delta-v', 'delta_v',
+        'payload', 'combustible', 'fuel', 'thrust', 'empuje', 'drag', 'propulsion', 'propulsión',
+        'masa', 'mezcla', 'altitud', 'stage', 'etapa',
+    }
 
     def __init__(
         self,
@@ -67,6 +72,67 @@ class ChatbotInterface:
                 defaults['steps'] = 720
         return defaults
 
+    def _profile_question(self, question: str, inferred_domains: list[str]) -> dict[str, Any]:
+        lowered = question.lower()
+        explicit_general = any(token in lowered for token in ['explica', 'resume', 'analiza', 'compar', 'riesgo', 'viabilidad'])
+        simulation_signal = any(token in lowered for token in self.SIMULATION_KEYWORDS) or any(
+            key in lowered for key in ['payload=', 'fuel=', 'combustible=', 'thrust=', 'empuje=', 'pasos=', 'steps=']
+        )
+        requires_simulation = simulation_signal or any(domain in self.ENGINEERING_DOMAINS for domain in inferred_domains)
+        if explicit_general and not simulation_signal:
+            requires_simulation = False
+        focus = 'simulation' if requires_simulation else 'general_analysis'
+        return {
+            'focus': focus,
+            'requires_simulation': requires_simulation,
+            'domains': inferred_domains,
+            'question_length': len(question),
+            'optimization_requested': any(word in lowered for word in ['optimiza', 'optimize', 'mejora', 'improve']),
+        }
+
+    def _build_general_analysis_frame(
+        self,
+        question: str,
+        profile: dict[str, Any],
+        knowledge_summary: str,
+        defaults: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        defaults = defaults or {}
+        domains = profile.get('domains') or ['systems']
+        decision_axes = ['factibilidad', 'riesgos', 'restricciones', 'evidencia', 'siguientes experimentos']
+        questions_to_validate = [
+            '¿Qué hipótesis críticas siguen sin evidencia directa?',
+            '¿Qué restricciones físicas, económicas o regulatorias limitan la propuesta?',
+            '¿Qué variable domina la incertidumbre del análisis?',
+            '¿Qué prueba o fuente permitiría refutar la hipótesis principal?',
+        ]
+        return {
+            'run_id': str(defaults.get('run_id', f'analysis_{uuid.uuid4().hex[:10]}')),
+            'mode': 'general_analysis',
+            'problem_type': 'consulta analítica general',
+            'domains': domains,
+            'analytical_depth': 'media-alta' if len(question) > 80 else 'media',
+            'uncertainty_index': round(min(0.92, 0.35 + len(domains) * 0.07), 3),
+            'breadth_score': round(min(0.96, 0.4 + len(domains) * 0.09), 3),
+            'decision_axes': decision_axes,
+            'questions_to_validate': questions_to_validate,
+            'knowledge_summary': knowledge_summary,
+            'delta_v_m_s': 0.0,
+            'max_altitude_m': 0.0,
+            'range_m': 0.0,
+            'burn_time_s': 0.0,
+            'final_velocity_m_s': 0.0,
+            'remaining_fuel_kg': 0.0,
+            'payload_mass_kg': 0.0,
+            'chemistry': {'estimated_efficiency': 0.0},
+            'resource_profile': {
+                'chunk_size': 0,
+                'max_memory_mb': CONFIG.max_task_memory_mb,
+                'estimated_history_bytes': len(knowledge_summary.encode('utf-8')),
+                'resumed_from_checkpoint': False,
+            },
+        }
+
     def _progress(self, run_id: str, progress: float) -> None:
         self.logger.info('Progreso %s: %.1f%%', run_id, progress * 100)
 
@@ -90,24 +156,18 @@ class ChatbotInterface:
             f" La corrida activa {simulation['run_id']} se ejecutó en bloques pequeños para respetar límites de memoria de Termux."
             f" El apoyo externo terminó con estado {external['status']} tras {external.get('queries_executed', 0)} búsquedas, una señal de factibilidad aproximada de {synthesis.get('feasibility_signal', 0.0)}, una calidad media de evidencia de {synthesis.get('quality_score', 0.0)} y un mapa de conectividad por fuente para endurecer futuras consultas."
         )
-        conclusions = (
-            f"Para esta consulta, el diseño analizado alcanza aproximadamente {simulation['max_altitude_m']} m de altitud máxima con un delta-v de {simulation['delta_v_m_s']} m/s. "
-            f"El motor de investigación recomienda trabajar por dominios {', '.join(external.get('domains', [])[:5]) or 'generales'} y priorizar fuentes {', '.join(ml_result.preferred_domains[:4])}. "
-            f"La siguiente mejora más prometedora es convertir los hallazgos externos y los riesgos detectados en requisitos cuantitativos para nuevas simulaciones y validaciones. "
-            'Los resultados son útiles para exploración conceptual avanzada, pero no sustituyen validación de ingeniería de alta fidelidad ni garantizan éxito real del 100 %.'
-        )
         if simulation.get('mode') == 'general_analysis':
             conclusions = (
                 f"El problema se trató como análisis general y no como una simulación física cerrada. El sistema recomienda profundizar en los ejes {', '.join(simulation.get('decision_axes', [])[:6]) or 'principales'}, "
-                f"resolver primero los vacíos críticos de evidencia y solo después cerrar una respuesta ejecutiva o un plan técnico. "
+                'resolver primero los vacíos críticos de evidencia y solo después cerrar una respuesta ejecutiva o un plan técnico. '
                 'Esto permite responder preguntas de física, química, matemáticas, geopolítica, ingeniería u otros dominios sin quedar limitado a un solo tipo de problema.'
             )
         else:
             conclusions = (
                 f"Para esta consulta, el diseño analizado alcanza aproximadamente {simulation['max_altitude_m']} m de altitud máxima con un delta-v de {simulation['delta_v_m_s']} m/s. "
                 f"El motor de investigación recomienda trabajar por dominios {', '.join(external.get('domains', [])[:5]) or 'generales'} y priorizar fuentes {', '.join(ml_result.preferred_domains[:4])}. "
-                f"La siguiente mejora más prometedora es convertir los hallazgos externos y los riesgos detectados en requisitos cuantitativos para nuevas simulaciones y validaciones. "
-                'Los resultados son útiles para exploración conceptual avanzada, pero no sustituyen validación de ingeniería de alta fidelidad ni garantizan éxito real del 100 %.'
+                'La siguiente mejora más prometedora es convertir los hallazgos externos y los riesgos detectados en requisitos cuantitativos para nuevas simulaciones y validaciones. '
+                'Los resultados son útiles para exploración conceptual avanzada, pero no sustituyen validación de ingeniería de alta fidelidad ni garantizan éxito real del 100 %. '
             )
         return sanitize_text(analysis), sanitize_text(conclusions)
 
@@ -135,7 +195,7 @@ class ChatbotInterface:
             simulation_future = self.background_executor.submit(self.simulation.run, simulation_request, self._progress)
             simulation = simulation_future.result()
         else:
-            simulation = self._build_general_analysis_frame(question, profile, knowledge.summary, {})
+            simulation = self._build_general_analysis_frame(question, profile, knowledge.summary, defaults)
 
         self.ml_model.train_from_result(simulation)
         ml_result = self.ml_model.predict(simulation)
@@ -150,7 +210,7 @@ class ChatbotInterface:
         )
 
         optimization = None
-        if profile['requires_simulation'] and any(word in question.lower() for word in ['optimiza', 'optimize', 'mejora', 'improve']):
+        if profile['requires_simulation'] and profile['optimization_requested']:
             optimization_future = self.background_executor.submit(self.optimizer.optimize, question, 8, self._progress)
             optimization = optimization_future.result()
 
@@ -162,7 +222,6 @@ class ChatbotInterface:
             float(external.get('synthesis', {}).get('quality_score', 0.0)),
         )
 
-        analysis, conclusions = self._build_analysis(knowledge.summary, simulation, external, recent_context, ml_result, profile)
         analysis, conclusions = self._build_analysis(knowledge.summary, simulation, external, recent_context, ml_result)
         analysis = sanitize_text(analysis + self._resume_note())
         payload = {
