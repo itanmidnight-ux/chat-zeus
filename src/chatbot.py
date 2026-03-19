@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-import re
+import uuid
 from typing import Any
 
 from src.config import CONFIG
@@ -13,7 +13,8 @@ from src.optimizer import IterativeOptimizer
 from src.reporting import ReportWriter
 from src.simulation import SimulationEngine
 from src.storage import StorageManager
-from src.utils import safe_error_message, sanitize_text
+from src.utils import detect_linker_memory_issue, extract_numeric_value, safe_error_message, sanitize_text
+from src.worker import BackgroundExecutor
 
 
 class ChatbotInterface:
@@ -26,6 +27,7 @@ class ChatbotInterface:
         external_fetcher: ExternalKnowledgeFetcher,
         optimizer: IterativeOptimizer,
         report_writer: ReportWriter,
+        background_executor: BackgroundExecutor,
         logger,
     ):
         self.storage = storage
@@ -35,23 +37,32 @@ class ChatbotInterface:
         self.external_fetcher = external_fetcher
         self.optimizer = optimizer
         self.report_writer = report_writer
+        self.background_executor = background_executor
         self.logger = logger
 
     def _extract_defaults(self, question: str) -> dict[str, float | int]:
         defaults: dict[str, float | int] = {}
         patterns = {
-            'payload_mass_kg': r'payload\s*=\s*([0-9]+(?:\.[0-9]+)?)',
-            'fuel_mass_kg': r'fuel\s*=\s*([0-9]+(?:\.[0-9]+)?)',
-            'dry_mass_kg': r'dry\s*=\s*([0-9]+(?:\.[0-9]+)?)',
-            'thrust_n': r'thrust\s*=\s*([0-9]+(?:\.[0-9]+)?)',
-            'steps': r'steps\s*=\s*([0-9]+)',
-            'mixture_ratio': r'(?:mixture|mezcla)\s*=\s*([0-9]+(?:\.[0-9]+)?)',
+            'payload_mass_kg': r'(?:payload|carga(?:\s+útil)?)\s*=\s*([0-9]+(?:[\.,][0-9]+)?)',
+            'fuel_mass_kg': r'(?:fuel|combustible)\s*=\s*([0-9]+(?:[\.,][0-9]+)?)',
+            'dry_mass_kg': r'(?:dry|masa\s+seca)\s*=\s*([0-9]+(?:[\.,][0-9]+)?)',
+            'thrust_n': r'(?:thrust|empuje)\s*=\s*([0-9]+(?:[\.,][0-9]+)?)',
+            'steps': r'(?:steps|pasos)\s*=\s*([0-9]+)',
+            'mixture_ratio': r'(?:mixture|mezcla)\s*=\s*([0-9]+(?:[\.,][0-9]+)?)',
+            'exhaust_velocity_m_s': r'(?:ve|escape|exhaust)\s*=\s*([0-9]+(?:[\.,][0-9]+)?)',
+            'area_m2': r'(?:area|área)\s*=\s*([0-9]+(?:[\.,][0-9]+)?)',
+            'drag_coefficient': r'(?:cd|drag)\s*=\s*([0-9]+(?:[\.,][0-9]+)?)',
         }
         for key, pattern in patterns.items():
-            match = re.search(pattern, question, re.IGNORECASE)
-            if match:
-                value = float(match.group(1))
-                defaults[key] = int(value) if key == 'steps' else value
+            value = extract_numeric_value(question, pattern)
+            if value is not None:
+                defaults[key] = int(value) if key == 'steps' else float(value)
+        if 'steps' not in defaults:
+            lower_question = question.lower()
+            if any(word in lower_question for word in ['rápido', 'rapido', 'ligero', 'simple']):
+                defaults['steps'] = 240
+            elif any(word in lower_question for word in ['preciso', 'larga', 'detallado', 'optimiza']):
+                defaults['steps'] = 720
         return defaults
 
     def _progress(self, run_id: str, progress: float) -> None:
@@ -75,21 +86,38 @@ class ChatbotInterface:
         )
         return sanitize_text(analysis), sanitize_text(conclusions)
 
+    def _resume_note(self) -> str:
+        pending_runs = self.storage.recover_incomplete_runs()
+        if not pending_runs:
+            return ''
+        latest = pending_runs[0]
+        return (
+            f" Se detectó una ejecución previa no finalizada ({latest['run_id']}) con progreso "
+            f"{round(float(latest['progress']) * 100, 1)} %, lo que confirma que el sistema conserva checkpoints reanudables tras reinicios."
+        )
+
     def answer(self, question: str) -> dict[str, Any]:
         recent_context = self.storage.recent_conversations(limit=CONFIG.max_history_messages)
         knowledge = self.knowledge.retrieve(question, recent_context=recent_context)
         defaults = self._extract_defaults(question)
+        run_id = f"sim_{uuid.uuid5(uuid.NAMESPACE_DNS, question).hex[:12]}"
+        defaults['run_id'] = run_id
         simulation_request = self.simulation.build_request(question, defaults)
-        simulation = self.simulation.run(simulation_request, progress_callback=self._progress)
+        simulation_future = self.background_executor.submit(self.simulation.run, simulation_request, self._progress)
+        simulation = simulation_future.result()
         self.ml_model.train_from_result(simulation)
         ml_result = self.ml_model.predict(simulation)
-        external = self.external_fetcher.fetch_formula_hint(question)
+        external_future = self.background_executor.submit(self.external_fetcher.fetch_formula_hint, question)
 
         optimization = None
         if any(word in question.lower() for word in ['optimiza', 'optimize', 'mejora', 'improve']):
-            optimization = self.optimizer.optimize(question, progress_callback=self._progress)
+            optimization_future = self.background_executor.submit(self.optimizer.optimize, question, 6, self._progress)
+            optimization = optimization_future.result()
+
+        external = external_future.result()
 
         analysis, conclusions = self._build_analysis(question, knowledge.summary, simulation, external, recent_context)
+        analysis = sanitize_text(analysis + self._resume_note())
         payload = {
             'analysis': analysis,
             'conclusions': conclusions,
@@ -121,6 +149,15 @@ class ChatbotInterface:
             message = 'Se detectó un fallo de memoria. Reduce el tamaño del problema o los pasos de simulación.'
             self.logger.error(message)
             return {'response_text': message, 'error': safe_error_message(exc)}
+        except OSError as exc:
+            if detect_linker_memory_issue(exc):
+                message = (
+                    'Se detectó saturación de memoria del linker de Android/Termux. '
+                    'El sistema conservó checkpoints; reintenta con menos pasos, menor tamaño de problema o menos dependencias nativas cargadas.'
+                )
+                self.logger.error(message)
+                return {'response_text': message, 'error': safe_error_message(exc)}
+            raise
         except ZeroDivisionError as exc:
             message = 'Se evitó una división por cero. Revisa parámetros de masa, empuje o velocidad de escape.'
             self.logger.error(message)

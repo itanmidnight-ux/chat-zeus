@@ -79,8 +79,14 @@ class SimulationEngine:
         downrange = float(checkpoint.get('downrange', 0.0))
         remaining_fuel = float(checkpoint.get('remaining_fuel', request.fuel_mass_kg))
         max_altitude = float(checkpoint.get('max_altitude', altitude))
-        history = list(checkpoint.get('history', []))[-200:]
+        history = list(checkpoint.get('history', []))[-CONFIG.max_checkpoint_history:]
         thermo = checkpoint.get('thermo') or self._thermo_snapshot(request)
+
+        completed_steps = int(checkpoint.get('step', checkpoint.get('completed_steps', 0)))
+        if completed_steps >= request.steps and checkpoint.get('delta_v_m_s') is not None:
+            checkpoint['resource_profile'] = checkpoint.get('resource_profile', {})
+            checkpoint['resource_profile']['resumed_from_checkpoint'] = True
+            return checkpoint
 
         burn_rate = max(0.01, request.thrust_n / max(request.exhaust_velocity_m_s, 1.0))
         total_initial_mass = request.payload_mass_kg + request.dry_mass_kg + request.fuel_mass_kg
@@ -120,7 +126,7 @@ class SimulationEngine:
                 'downrange': downrange,
                 'remaining_fuel': remaining_fuel,
                 'max_altitude': max_altitude,
-                'history': history[-200:],
+                'history': history[-CONFIG.max_checkpoint_history:],
                 'thermo': thermo,
                 'request': asdict(request),
             }
@@ -141,6 +147,7 @@ class SimulationEngine:
             'final_velocity_m_s': round(velocity, 3),
             'remaining_fuel_kg': round(remaining_fuel, 3),
             'payload_mass_kg': request.payload_mass_kg,
+            'completed_steps': request.steps,
             'chemistry': {
                 'mixture_ratio': request.mixture_ratio,
                 'estimated_efficiency': round(chem_efficiency, 4),
@@ -149,7 +156,8 @@ class SimulationEngine:
             'resource_profile': {
                 'chunk_size': self.chunk_size,
                 'max_memory_mb': CONFIG.max_task_memory_mb,
-                'estimated_history_bytes': len(json.dumps(history[-200:], ensure_ascii=False).encode('utf-8')),
+                'estimated_history_bytes': len(json.dumps(history[-CONFIG.max_checkpoint_history:], ensure_ascii=False).encode('utf-8')),
+                'resumed_from_checkpoint': start_step > 0,
             },
             'history': history[-20:],
         }
