@@ -75,9 +75,11 @@ class ChatbotInterface:
         if 'steps' not in defaults:
             lower_question = question.lower()
             if any(word in lower_question for word in ['rápido', 'rapido', 'ligero', 'simple']):
-                defaults['steps'] = 240
+                defaults['steps'] = 120
             elif any(word in lower_question for word in ['preciso', 'larga', 'detallado', 'optimiza', 'profundo']):
-                defaults['steps'] = 720
+                defaults['steps'] = 360
+        if 'steps' in defaults:
+            defaults['steps'] = max(60, min(int(defaults['steps']), 480))
         return defaults
 
     def _profile_question(self, question: str, inferred_domains: list[str]) -> dict[str, Any]:
@@ -279,7 +281,7 @@ class ChatbotInterface:
 
         self.ml_model.train_from_result(simulation)
         ml_result = self.ml_model.predict(simulation)
-        self.external_fetcher.max_queries = max(self.external_fetcher.max_queries, ml_result.research_intensity)
+        self.external_fetcher.max_queries = min(max(self.external_fetcher.max_queries, ml_result.research_intensity // 2), CONFIG.max_external_queries)
         research_context = f"{knowledge.summary} {' '.join(item.get('question', '') for item in recent_context[:3])}".strip()
         external_future = self.background_executor.submit(
             self.external_fetcher.fetch_research_dossier,

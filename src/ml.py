@@ -24,6 +24,7 @@ class HypothesisResult:
 class LightweightMLModel:
     MODEL_NAME = 'dedicated_online_regressor'
     FEATURE_NAMES = ['delta_v', 'max_altitude', 'burn_time', 'payload_mass', 'chem_efficiency']
+    MAX_PREDICTION_OBSERVATIONS = 24
 
     def __init__(self, storage: StorageManager):
         self.storage = storage
@@ -121,7 +122,8 @@ class LightweightMLModel:
 
     def predict(self, simulation_result: dict[str, Any]) -> HypothesisResult:
         current = self._feature_vector(simulation_result)
-        observations = self.storage.load_ml_observations()
+        observations = self.storage.load_ml_observations(limit=self.MAX_PREDICTION_OBSERVATIONS)
+        summary = self.storage.ml_observation_summary()
         source_weights = self._source_weights()
         normalized = self._normalized_features(current)
         linear_prediction = self._predict_linear(normalized)
@@ -149,7 +151,7 @@ class LightweightMLModel:
             )
 
         targets = [float(item['target']) for item in observations]
-        avg_target = mean(targets)
+        avg_target = float(summary.get('avg_target', 0.0)) if summary.get('samples_seen', 0.0) > 0 else mean(targets)
         blended_prediction = max(0.0, 0.35 * avg_target + 0.35 * heuristic_prediction + 0.30 * linear_prediction)
         samples_seen = int(self.state.get('samples_seen', 0))
         loss_ema = float(self.state.get('loss_ema', 0.0))

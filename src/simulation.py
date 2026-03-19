@@ -36,6 +36,7 @@ class SimulationEngine:
         self.storage = storage
         self.chunk_size = max(8, chunk_size)
         self.max_memory_bytes = CONFIG.max_task_memory_mb * 1024 * 1024
+        self.max_history_entries = max(8, min(CONFIG.max_checkpoint_history, self.chunk_size * 2))
 
     def build_request(self, question: str, defaults: dict[str, float | int] | None = None) -> SimulationRequest:
         defaults = defaults or {}
@@ -79,7 +80,7 @@ class SimulationEngine:
         downrange = float(checkpoint.get('downrange', 0.0))
         remaining_fuel = float(checkpoint.get('remaining_fuel', request.fuel_mass_kg))
         max_altitude = float(checkpoint.get('max_altitude', altitude))
-        history = list(checkpoint.get('history', []))[-CONFIG.max_checkpoint_history:]
+        history = list(checkpoint.get('history', []))[-self.max_history_entries:]
         thermo = checkpoint.get('thermo') or self._thermo_snapshot(request)
 
         completed_steps = int(checkpoint.get('step', checkpoint.get('completed_steps', 0)))
@@ -110,13 +111,14 @@ class SimulationEngine:
                 altitude = max(0.0, altitude + velocity * request.time_step_s)
                 downrange += max(velocity, 0.0) * request.time_step_s * 0.12
                 max_altitude = max(max_altitude, altitude)
-                if step % max(1, self.chunk_size // 4) == 0:
+                if step % max(1, self.chunk_size // 3) == 0:
                     history.append({
                         'step': step,
                         'altitude_m': round(altitude, 3),
                         'velocity_m_s': round(velocity, 3),
                         'dynamic_pressure_pa': round(dynamic_pressure, 3),
                     })
+                    history = history[-self.max_history_entries:]
 
             payload = {
                 'run_id': run_id,
@@ -126,7 +128,7 @@ class SimulationEngine:
                 'downrange': downrange,
                 'remaining_fuel': remaining_fuel,
                 'max_altitude': max_altitude,
-                'history': history[-CONFIG.max_checkpoint_history:],
+                'history': history[-self.max_history_entries:],
                 'thermo': thermo,
                 'request': asdict(request),
             }
@@ -156,10 +158,10 @@ class SimulationEngine:
             'resource_profile': {
                 'chunk_size': self.chunk_size,
                 'max_memory_mb': CONFIG.max_task_memory_mb,
-                'estimated_history_bytes': len(json.dumps(history[-CONFIG.max_checkpoint_history:], ensure_ascii=False).encode('utf-8')),
+                'estimated_history_bytes': len(json.dumps(history[-self.max_history_entries:], ensure_ascii=False).encode('utf-8')),
                 'resumed_from_checkpoint': start_step > 0,
             },
-            'history': history[-20:],
+            'history': history[-min(12, self.max_history_entries):],
         }
         self.storage.save_run_state(run_id, request.question, 'completed', 1.0, json.dumps(result, ensure_ascii=False))
         self.storage.save_checkpoint(run_id, result)
