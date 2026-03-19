@@ -76,7 +76,8 @@ class ChatbotInterface:
         return sanitize_text(analysis), sanitize_text(conclusions)
 
     def answer(self, question: str) -> dict[str, Any]:
-        knowledge = self.knowledge.retrieve(question)
+        recent_context = self.storage.recent_conversations(limit=CONFIG.max_history_messages)
+        knowledge = self.knowledge.retrieve(question, recent_context=recent_context)
         defaults = self._extract_defaults(question)
         simulation_request = self.simulation.build_request(question, defaults)
         simulation = self.simulation.run(simulation_request, progress_callback=self._progress)
@@ -88,7 +89,6 @@ class ChatbotInterface:
         if any(word in question.lower() for word in ['optimiza', 'optimize', 'mejora', 'improve']):
             optimization = self.optimizer.optimize(question, progress_callback=self._progress)
 
-        recent_context = self.storage.recent_conversations(limit=CONFIG.max_history_messages)
         analysis, conclusions = self._build_analysis(question, knowledge.summary, simulation, external, recent_context)
         payload = {
             'analysis': analysis,

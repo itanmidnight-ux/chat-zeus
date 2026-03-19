@@ -1,22 +1,30 @@
-"""Optimización iterativa simple mediante muestreo aleatorio guiado."""
+"""Optimización iterativa simple mediante muestreo aleatorio guiado y checkpoints."""
 from __future__ import annotations
 
+import json
 import random
+import uuid
 from typing import Any
 
 from src.simulation import SimulationEngine
+from src.storage import StorageManager
 
 
 class IterativeOptimizer:
-    def __init__(self, simulation_engine: SimulationEngine, seed: int = 7):
+    def __init__(self, simulation_engine: SimulationEngine, storage: StorageManager, seed: int = 7):
         self.simulation_engine = simulation_engine
+        self.storage = storage
         self.random = random.Random(seed)
 
     def optimize(self, question: str, iterations: int = 6, progress_callback=None) -> dict[str, Any]:
-        best_result: dict[str, Any] | None = None
-        best_params: dict[str, float] | None = None
-        best_score = float('-inf')
-        for idx in range(iterations):
+        run_id = f"opt_{uuid.uuid5(uuid.NAMESPACE_DNS, question).hex[:12]}"
+        checkpoint = self.storage.load_checkpoint(run_id)
+        start_idx = int(checkpoint.get('iteration', 0))
+        best_result: dict[str, Any] | None = checkpoint.get('best_result')
+        best_params: dict[str, float] | None = checkpoint.get('best_parameters')
+        best_score = float(checkpoint.get('best_score', float('-inf')))
+
+        for idx in range(start_idx, iterations):
             params = {
                 'payload_mass_kg': self.random.uniform(80, 180),
                 'fuel_mass_kg': self.random.uniform(180, 360),
@@ -36,12 +44,29 @@ class IterativeOptimizer:
                 best_score = score
                 best_result = result
                 best_params = params
+
+            payload = {
+                'run_id': run_id,
+                'iteration': idx + 1,
+                'best_parameters': best_params or {},
+                'best_result': best_result or {},
+                'iterations': iterations,
+                'objective': '0.8 * delta_v + max_altitude + 0.2 * range',
+                'best_score': round(best_score, 3) if best_score != float('-inf') else 0.0,
+            }
+            self.storage.save_checkpoint(run_id, payload)
+            self.storage.save_run_state(run_id, question, 'running', (idx + 1) / iterations, json.dumps(payload, ensure_ascii=False))
             if progress_callback:
-                progress_callback('optimizer', (idx + 1) / iterations)
-        return {
+                progress_callback(run_id, (idx + 1) / iterations)
+
+        result = {
+            'run_id': run_id,
             'best_parameters': best_params or {},
             'best_result': best_result or {},
             'iterations': iterations,
             'objective': '0.8 * delta_v + max_altitude + 0.2 * range',
             'best_score': round(best_score, 3) if best_score != float('-inf') else 0.0,
         }
+        self.storage.save_run_state(run_id, question, 'completed', 1.0, json.dumps(result, ensure_ascii=False))
+        self.storage.save_checkpoint(run_id, result)
+        return result

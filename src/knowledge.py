@@ -20,10 +20,13 @@ class KnowledgeManager:
     def __init__(self, storage: StorageManager):
         self.storage = storage
 
-    def retrieve(self, question: str) -> KnowledgeResult:
-        snippets = self.storage.search_knowledge(question)
+    def retrieve(self, question: str, recent_context: list[dict[str, Any]] | None = None) -> KnowledgeResult:
+        recent_context = recent_context or []
+        context_terms = ' '.join(item.get('question', '') for item in recent_context[:3])
+        query = f"{question} {context_terms}".strip()
+        snippets = self.storage.search_knowledge(query)
         if not snippets:
-            return KnowledgeResult([], 'No se encontraron documentos locales relevantes; se usará análisis directo y/o búsqueda externa.', [])
+            return KnowledgeResult([], 'No se encontraron documentos locales relevantes; se usará análisis directo y/o búsqueda externa, manteniendo continuidad con el historial reciente si existe.', [])
         compact_parts: list[str] = []
         formulas: list[str] = []
         total_chars = 0
