@@ -61,28 +61,38 @@ class ChatbotInterface:
             lower_question = question.lower()
             if any(word in lower_question for word in ['rápido', 'rapido', 'ligero', 'simple']):
                 defaults['steps'] = 240
-            elif any(word in lower_question for word in ['preciso', 'larga', 'detallado', 'optimiza']):
+            elif any(word in lower_question for word in ['preciso', 'larga', 'detallado', 'optimiza', 'profundo']):
                 defaults['steps'] = 720
         return defaults
 
     def _progress(self, run_id: str, progress: float) -> None:
         self.logger.info('Progreso %s: %.1f%%', run_id, progress * 100)
 
-    def _build_analysis(self, question: str, knowledge_summary: str, simulation: dict[str, Any], external: dict[str, Any], recent_context: list[dict[str, Any]]) -> tuple[str, str]:
+    def _build_analysis(
+        self,
+        knowledge_summary: str,
+        simulation: dict[str, Any],
+        external: dict[str, Any],
+        recent_context: list[dict[str, Any]],
+        ml_result,
+    ) -> tuple[str, str]:
         context_hint = ''
         if recent_context:
             context_hint = f" El historial reciente contiene {len(recent_context)} intercambios y se usó para mantener continuidad temática sin exponer pasos internos."
+        synthesis = external.get('synthesis', {})
         analysis = (
             'Se combinó recuperación local de conocimiento científico, una simulación silenciosa de ascenso y trayectoria simplificada, '
-            'estimaciones básicas de gravedad, arrastre, propulsión y termodinámica, además de una capa de aprendizaje incremental con checkpoints persistentes.'
+            'estimaciones básicas de gravedad, arrastre, propulsión y termodinámica, además de una capa de aprendizaje incremental con checkpoints persistentes. '
+            'La consulta activó una investigación web multi-fuente con planificación por dominios, evaluación de evidencia, detección básica de contradicciones, conectividad reforzada con reintentos y priorización adaptativa de fuentes.'
             f' Resumen RAG: {knowledge_summary}.{context_hint}'
             f" La corrida activa {simulation['run_id']} se ejecutó en bloques pequeños para respetar límites de memoria de Termux."
-            f" El apoyo externo terminó con estado {external['status']}."
+            f" El apoyo externo terminó con estado {external['status']} tras {external.get('queries_executed', 0)} búsquedas, una señal de factibilidad aproximada de {synthesis.get('feasibility_signal', 0.0)}, una calidad media de evidencia de {synthesis.get('quality_score', 0.0)} y un mapa de conectividad por fuente para endurecer futuras consultas."
         )
         conclusions = (
             f"Para esta consulta, el diseño analizado alcanza aproximadamente {simulation['max_altitude_m']} m de altitud máxima con un delta-v de {simulation['delta_v_m_s']} m/s. "
-            f"El modelo sugiere que la siguiente mejora más prometedora sería optimizar simultáneamente masa estructural, relación de mezcla y empuje para elevar el margen energético sin disparar el drag. "
-            'Los resultados son útiles para exploración conceptual en Termux, pero no sustituyen validación de ingeniería de alta fidelidad.'
+            f"El motor de investigación recomienda trabajar por dominios {', '.join(external.get('domains', [])[:5]) or 'generales'} y priorizar fuentes {', '.join(ml_result.preferred_domains[:4])}. "
+            f"La siguiente mejora más prometedora es convertir los hallazgos externos y los riesgos detectados en requisitos cuantitativos para nuevas simulaciones y validaciones. "
+            'Los resultados son útiles para exploración conceptual avanzada, pero no sustituyen validación de ingeniería de alta fidelidad ni garantizan éxito real del 100 %.'
         )
         return sanitize_text(analysis), sanitize_text(conclusions)
 
@@ -107,16 +117,30 @@ class ChatbotInterface:
         simulation = simulation_future.result()
         self.ml_model.train_from_result(simulation)
         ml_result = self.ml_model.predict(simulation)
-        external_future = self.background_executor.submit(self.external_fetcher.fetch_formula_hint, question)
+        self.external_fetcher.max_queries = max(self.external_fetcher.max_queries, ml_result.research_intensity)
+        research_context = f"{knowledge.summary} {' '.join(item.get('question', '') for item in recent_context[:3])}".strip()
+        external_future = self.background_executor.submit(
+            self.external_fetcher.fetch_research_dossier,
+            question,
+            research_context,
+            ml_result.preferred_domains,
+            ml_result.source_weights,
+        )
 
         optimization = None
         if any(word in question.lower() for word in ['optimiza', 'optimize', 'mejora', 'improve']):
-            optimization_future = self.background_executor.submit(self.optimizer.optimize, question, 6, self._progress)
+            optimization_future = self.background_executor.submit(self.optimizer.optimize, question, 8, self._progress)
             optimization = optimization_future.result()
 
         external = external_future.result()
+        self.storage.save_research_session(
+            question,
+            json.dumps(external, ensure_ascii=False),
+            len(external.get('findings', [])),
+            float(external.get('synthesis', {}).get('quality_score', 0.0)),
+        )
 
-        analysis, conclusions = self._build_analysis(question, knowledge.summary, simulation, external, recent_context)
+        analysis, conclusions = self._build_analysis(knowledge.summary, simulation, external, recent_context, ml_result)
         analysis = sanitize_text(analysis + self._resume_note())
         payload = {
             'analysis': analysis,
@@ -130,6 +154,10 @@ class ChatbotInterface:
                 'prediction': ml_result.prediction,
                 'confidence': ml_result.confidence,
                 'hypotheses': ml_result.hypotheses,
+                'preferred_domains': ml_result.preferred_domains,
+                'research_intensity': ml_result.research_intensity,
+                'source_weights': ml_result.source_weights,
+                'model_state': ml_result.model_state,
             },
             'external': external,
             'optimization': optimization,
