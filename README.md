@@ -1,18 +1,28 @@
 # Chat Zeus Termux
 
-Sistema modular en Python 3 para Android/Termux que actúa como una **supercomputadora simplificada con chatbot**. El objetivo es responder preguntas complejas mediante recuperación de conocimiento local, simulaciones científicas ligeras, aprendizaje incremental y optimización iterativa con checkpoints.
+Sistema modular en Python 3 para Android/Termux que actúa como una **supercomputadora simplificada con chatbot**. Está diseñado para ejecutarse con `python3 main.py`, responder preguntas científicas complejas en modo silencioso y persistir el trabajo automáticamente para reanudar simulaciones largas.
+
+## Características principales
+
+- **Salida silenciosa**: la terminal solo recibe la respuesta final en texto plano para cada pregunta.
+- **Persistencia transparente**: checkpoints JSON y base SQLite para historial, conocimiento, aprendizaje y reanudación.
+- **RAG local ligero**: recuperación de fórmulas y conceptos desde una base científica local.
+- **Simulación científica simplificada**: gravedad, arrastre, propulsión, trayectoria vertical simplificada y termoquímica básica.
+- **ML ligero adaptable**: heurísticas incrementales con autodetección opcional de backends compatibles como TensorFlow Lite o PyTorch.
+- **Optimización iterativa**: muestreo ligero con checkpoints, apto para procesos largos en Termux.
+- **Tolerancia a errores**: intenta continuar ante datos faltantes, archivos JSON corruptos o fallos parciales.
 
 ## Estructura
 
 - `main.py`: entrada principal para ejecutar con `python3 main.py`.
-- `src/app.py`: construcción de la aplicación y bucle CLI.
-- `src/chatbot.py`: coordinación de la conversación, simulación, ML, búsqueda externa y reportes.
+- `src/app.py`: construcción de la aplicación y bucle CLI silencioso.
+- `src/chatbot.py`: coordinación de conversación, simulación, ML, búsqueda externa y redacción final.
 - `src/knowledge.py`: recuperación local de conocimiento estilo RAG.
 - `src/storage.py`: SQLite + checkpoints JSON para reanudación.
-- `src/simulation.py`: simulación física simplificada con tareas pequeñas y guardado de progreso.
-- `src/ml.py`: modelo incremental ligero sin dependencias pesadas.
-- `src/optimizer.py`: optimización iterativa por muestreo simple.
-- `src/reporting.py`: exportación de reportes JSON legibles.
+- `src/simulation.py`: simulación física/química simplificada con tareas pequeñas y guardado de progreso.
+- `src/ml.py`: aprendizaje incremental ligero con degradación elegante si no hay backend móvil.
+- `src/optimizer.py`: optimización iterativa por muestreo ligero.
+- `src/reporting.py`: generación de la respuesta final en texto plano y reportes JSON.
 - `data/chatbot/`, `data/models/`, `data/data/`, `data/logs/`: carpetas compatibles con el flujo pedido.
 
 ## Instalación en Termux
@@ -21,56 +31,61 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
    ```bash
    pkg update && pkg install python -y
    ```
-2. Opcionalmente instala librerías ligeras si quieres ampliar el sistema:
+2. Instala dependencias compatibles y ligeras:
    ```bash
-   pip install numpy sympy pandas requests
+   pip install numpy scipy pandas sympy requests
    ```
-3. Copia este proyecto en tu almacenamiento o dentro del `$HOME` de Termux.
+3. Opcionalmente añade un backend ML móvil si está disponible para tu dispositivo:
+   ```bash
+   pip install tflite-runtime
+   ```
+4. Ejecuta:
+   ```bash
+   python3 main.py
+   ```
 
-> El sistema actual funciona solo con la biblioteca estándar de Python, precisamente para minimizar problemas de compilación en Android.
+> El proyecto funciona sin dependencias pesadas adicionales. Si instalas librerías extra, el sistema las detecta sin exigir cambios en el código.
 
-## Ejecución
+## Uso
 
-```bash
-python3 main.py
-```
+Cada línea de entrada se interpreta como una consulta nueva. El programa mantiene contexto reciente en SQLite y devuelve **solo la respuesta final**.
 
-Ejemplos de consulta:
+Ejemplos:
 
 - `Analiza un cohete suborbital con payload=150 fuel=260 thrust=19000 steps=600`
 - `Optimiza el diseño de un lanzador ligero para mayor altitud`
-- `Calcula una trayectoria simple y resume las fórmulas relevantes`
+- `Calcula una trayectoria simple y resume fórmulas para combustible hipergólico`
 
-## Qué puede calcular
+Para terminar:
 
-- Simulaciones simplificadas de ascenso vertical con gravedad y arrastre.
-- Estimación de `delta-v`, alcance aproximado, tiempo de combustión y altitud máxima.
-- Recuperación de fórmulas locales desde una base SQLite embebida.
-- Búsqueda externa opcional de pistas/fórmulas con degradación elegante si no hay internet.
-- Aprendizaje incremental ligero a partir de resultados previos.
-- Optimización iterativa de parámetros con checkpoints y logs.
+```text
+salir
+```
 
-## Qué no puede calcular con precisión de ingeniería
+## Persistencia y carpetas
 
-- CFD avanzada, combustión detallada, dinámica orbital completa o química de alto detalle.
-- Modelos de ML grandes tipo LLM local en 4 GB de RAM.
-- Resultados certificados para seguridad aeroespacial real.
+Por defecto, el proyecto usa la carpeta `data/` dentro del repositorio. Si quieres emular exactamente el despliegue pedido con rutas tipo `/data/...`, puedes exportar una raíz personalizada antes de ejecutar:
 
-## Reanudación de simulaciones largas
+```bash
+export CHAT_ZEUS_DATA_ROOT=/data
+python3 main.py
+```
 
-- Cada corrida guarda checkpoints JSON en `data/data/checkpoints/`.
-- También guarda estado resumido en SQLite (`data/data/knowledge.sqlite3`).
-- Si Termux se cierra durante una corrida larga, puedes reutilizar el `run_id` guardado en el checkpoint para reanudar el proceso adaptando la consulta o extendiendo el código.
-- Los logs se almacenan en `data/logs/chat_zeus.log`.
+La estructura creada será:
 
-## Tolerancia a errores
+- `/data/chatbot/`
+- `/data/models/`
+- `/data/data/`
+- `/data/logs/`
 
-- Manejo de `MemoryError`, `ZeroDivisionError` y fallos generales.
-- Si un archivo JSON está corrupto, se ignora y se reconstruye estado desde valores por defecto.
-- La aplicación intenta no cerrarse inesperadamente: informa el error y continúa aceptando nuevas consultas.
+## Alcance científico actual
 
-## Sugerencias para Android/Termux
+El sistema puede ayudar con preguntas sobre:
 
-- Mantén `steps` entre 300 y 3000 para dispositivos con 4 GB RAM.
-- Evita múltiples optimizaciones simultáneas.
-- Usa `tmux` si planeas procesos de varias horas o días.
+- diseño conceptual de naves y lanzadores,
+- trayectorias simplificadas,
+- gravedad y arrastre básico,
+- combustibles y parámetros termoquímicos aproximados,
+- hipótesis de mejora y predicciones ligeras.
+
+No sustituye herramientas de alta fidelidad como CFD, análisis estructural detallado ni validación aeroespacial certificada.

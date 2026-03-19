@@ -1,6 +1,7 @@
 """Configuración central y rutas para el sistema compatible con Termux."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,23 +17,25 @@ class AppConfig:
     report_dir: Path
     checkpoint_dir: Path
     max_task_memory_mb: int = 1024
-    simulation_chunk_size: int = 100
+    simulation_chunk_size: int = 64
     default_steps: int = 500
     max_workers: int = 2
     internet_timeout_sec: int = 8
+    max_history_messages: int = 8
+    max_inline_context_chars: int = 2000
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-DATA_ROOT = ROOT_DIR / 'data'
+TERMUX_DATA_ROOT = Path(os.environ.get('CHAT_ZEUS_DATA_ROOT', ROOT_DIR / 'data'))
 CONFIG = AppConfig(
     base_dir=ROOT_DIR,
-    chatbot_dir=DATA_ROOT / 'chatbot',
-    models_dir=DATA_ROOT / 'models',
-    data_dir=DATA_ROOT / 'data',
-    logs_dir=DATA_ROOT / 'logs',
-    db_path=DATA_ROOT / 'data' / 'knowledge.sqlite3',
-    report_dir=DATA_ROOT / 'data' / 'reports',
-    checkpoint_dir=DATA_ROOT / 'data' / 'checkpoints',
+    chatbot_dir=TERMUX_DATA_ROOT / 'chatbot',
+    models_dir=TERMUX_DATA_ROOT / 'models',
+    data_dir=TERMUX_DATA_ROOT / 'data',
+    logs_dir=TERMUX_DATA_ROOT / 'logs',
+    db_path=TERMUX_DATA_ROOT / 'data' / 'knowledge.sqlite3',
+    report_dir=TERMUX_DATA_ROOT / 'data' / 'reports',
+    checkpoint_dir=TERMUX_DATA_ROOT / 'data' / 'checkpoints',
 )
 
 

@@ -10,10 +10,11 @@ from src.optimizer import IterativeOptimizer
 from src.reporting import ReportWriter
 from src.simulation import SimulationEngine
 from src.storage import StorageManager
-from src.utils import setup_logging
+from src.utils import ensure_environment_defaults, setup_logging
 
 
 def build_app() -> ChatbotInterface:
+    ensure_environment_defaults()
     ensure_directories()
     logger = setup_logging(CONFIG.logs_dir)
     storage = StorageManager(CONFIG.db_path, CONFIG.checkpoint_dir)
@@ -26,26 +27,16 @@ def build_app() -> ChatbotInterface:
     return ChatbotInterface(storage, knowledge, simulation, ml_model, external_fetcher, optimizer, report_writer, logger)
 
 
-def print_banner() -> None:
-    print('Supercomputadora simplificada para Termux')
-    print('Escribe una pregunta técnica o científica. Usa "salir" para terminar.')
-    print('Puedes incluir parámetros como payload=120 fuel=240 thrust=18000 steps=500')
-
-
 def main() -> None:
     app = build_app()
-    print_banner()
     while True:
-        question = input('\n> ').strip()
+        try:
+            question = input().strip()
+        except EOFError:
+            break
         if not question:
-            print('Introduce una pregunta o escribe salir.')
             continue
         if question.lower() in {'salir', 'exit', 'quit'}:
-            print('Sesión finalizada.')
             break
         result = app.safe_answer(question)
-        print('\n' + result.get('response_text', 'Sin respuesta disponible.'))
-        if result.get('report_path'):
-            print(f"\n[reporte] Guardado en {result['report_path']}")
-        if result.get('error'):
-            print(f"[error] {result['error']}")
+        print(result.get('response_text', 'Sin respuesta disponible.'))
