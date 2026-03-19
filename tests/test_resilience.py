@@ -53,7 +53,8 @@ class MLBackendSafetyTests(unittest.TestCase):
 
             storage = StorageManager(Path(tmp) / 'knowledge.sqlite3', Path(tmp) / 'checkpoints')
             model = LightweightMLModel(storage)
-            model.model_state_path = Path(tmp) / CONFIG.ml_checkpoint_file
+            model.checkpoints.path = Path(tmp) / CONFIG.ml_checkpoint_file
+            model.model_state_path = model.checkpoints.path
             model._persist_state()
             model.train_from_result({
                 'delta_v_m_s': 100.0,
@@ -67,6 +68,28 @@ class MLBackendSafetyTests(unittest.TestCase):
             self.assertTrue(state_path.exists())
             payload = json.loads(state_path.read_text())
             self.assertGreaterEqual(payload['samples_seen'], 1)
+
+    def test_prediction_exposes_variables_uncertainty_and_recommendations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from src.ml import LightweightMLModel
+
+            storage = StorageManager(Path(tmp) / 'knowledge.sqlite3', Path(tmp) / 'checkpoints')
+            model = LightweightMLModel(storage)
+            simulation = {
+                'delta_v_m_s': 120.0,
+                'max_altitude_m': 80.0,
+                'burn_time_s': 4.0,
+                'payload_mass_kg': 12.0,
+                'range_m': 30.0,
+                'drag_coefficient': 0.7,
+                'chemistry': {'estimated_efficiency': 0.45, 'mixture_ratio': 2.2},
+            }
+            model.train_from_result(simulation, question='analiza integral y matriz de un cohete', knowledge_summary='delta_v y arrastre')
+            result = model.predict(simulation, question='analiza integral y matriz de un cohete', knowledge_summary='delta_v y arrastre')
+
+            self.assertGreater(len(result.variables_considered), 0)
+            self.assertGreater(len(result.uncertainty_drivers), 0)
+            self.assertGreater(len(result.recommendations), 0)
 
 
 class TermuxUITests(unittest.TestCase):

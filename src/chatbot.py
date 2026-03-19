@@ -239,7 +239,7 @@ class ChatbotInterface:
         simulation = self._build_general_analysis_frame(question, profile, knowledge.summary, {'run_id': f'fallback_{uuid.uuid4().hex[:8]}'})
         external = self._degraded_external_result(question, knowledge.summary, safe_error_message(exc))
         calculations = self.calculator.analyze(question, simulation, knowledge.summary)
-        ml_result = self.ml_model.predict(simulation)
+        ml_result = self.ml_model.predict(simulation, question=question, knowledge_summary=knowledge.summary)
         analysis, conclusions = self._build_analysis(knowledge.summary, simulation, external, recent_context, ml_result)
         payload = {
             'analysis': sanitize_text(
@@ -256,6 +256,10 @@ class ChatbotInterface:
                 'research_intensity': ml_result.research_intensity,
                 'source_weights': ml_result.source_weights,
                 'model_state': ml_result.model_state,
+                'variables_considered': ml_result.variables_considered,
+                'uncertainty_drivers': ml_result.uncertainty_drivers,
+                'recommendations': ml_result.recommendations,
+                'reliability_score': ml_result.reliability_score,
             },
             'external': external,
             'calculations': calculations,
@@ -282,8 +286,8 @@ class ChatbotInterface:
         else:
             simulation = self._build_general_analysis_frame(question, profile, knowledge.summary, defaults)
 
-        self.ml_model.train_from_result(simulation)
-        ml_result = self.ml_model.predict(simulation)
+        self.ml_model.train_from_result(simulation, question=question, knowledge_summary=knowledge.summary)
+        ml_result = self.ml_model.predict(simulation, question=question, knowledge_summary=knowledge.summary)
         self.external_fetcher.max_queries = min(max(self.external_fetcher.max_queries, ml_result.research_intensity // 2), CONFIG.max_external_queries)
         research_context = f"{knowledge.summary} {' '.join(item.get('question', '') for item in recent_context[:3])}".strip()
         external_future = self.background_executor.submit(
@@ -332,6 +336,10 @@ class ChatbotInterface:
                 'research_intensity': ml_result.research_intensity,
                 'source_weights': ml_result.source_weights,
                 'model_state': ml_result.model_state,
+                'variables_considered': ml_result.variables_considered,
+                'uncertainty_drivers': ml_result.uncertainty_drivers,
+                'recommendations': ml_result.recommendations,
+                'reliability_score': ml_result.reliability_score,
             },
             'external': external,
             'calculations': calculations,
