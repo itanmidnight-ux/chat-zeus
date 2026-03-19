@@ -85,6 +85,23 @@ class ExternalKnowledgeFetcher:
         ranked = [token for token, _ in Counter(self._tokenize(f'{question} {context}')).most_common(16)]
         return ranked[:10]
 
+    def _query_budget(self, question: str, keywords: list[str], domains: list[str]) -> int:
+        lowered = question.lower()
+        complexity_markers = (
+            'analiza', 'análisis', 'simulate', 'simula', 'optimiza', 'optimize', 'diseña', 'design',
+            'hipótesis', 'modelo', 'rocket', 'orbita', 'orbital', 'propulsion', 'propulsión',
+        )
+        budget = 6
+        if len(question) > 120:
+            budget += 4
+        if len(keywords) >= 6:
+            budget += 2
+        if len(domains) >= 3:
+            budget += 2
+        if any(marker in lowered for marker in complexity_markers):
+            budget += 4
+        return max(4, min(self.max_queries, budget))
+
     def infer_domains(self, question: str, context: str = '') -> list[str]:
         haystack = f'{question} {context}'.lower()
         matches: list[str] = []
@@ -127,6 +144,7 @@ class ExternalKnowledgeFetcher:
         keywords = self._extract_keywords(question, context)
         domains = self.infer_domains(question, context)
         intents = self._intents_for_domains(domains)
+        query_budget = self._query_budget(question, keywords, domains)
         source_weights = self._health_adjusted_weights(source_weights)
         ranked_sources = [name for name, _ in sorted(source_weights.items(), key=lambda item: item[1], reverse=True)]
         ranked_sources = [item for item in ranked_sources if item in self.SOURCE_BASE_WEIGHTS]
@@ -151,9 +169,9 @@ class ExternalKnowledgeFetcher:
         for intent in intents:
             for source in ranked_sources:
                 tasks.append({'intent': intent, 'query': query_templates[intent][:260], 'source': source, 'weight': source_weights.get(source, 0.4)})
-                if len(tasks) >= self.max_queries:
+                if len(tasks) >= query_budget:
                     return {'domains': domains, 'keywords': keywords, 'intents': intents, 'tasks': tasks, 'source_weights': source_weights}
-        return {'domains': domains, 'keywords': keywords, 'intents': intents, 'tasks': tasks[: self.max_queries], 'source_weights': source_weights}
+        return {'domains': domains, 'keywords': keywords, 'intents': intents, 'tasks': tasks[:query_budget], 'source_weights': source_weights}
 
     def _search_duckduckgo(self, query: str) -> list[dict[str, Any]]:
         url = 'https://api.duckduckgo.com/?' + urlencode({'q': query, 'format': 'json', 'no_html': 1, 'skip_disambig': 1})

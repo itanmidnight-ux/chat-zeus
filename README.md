@@ -9,9 +9,11 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
 - **Reanudación tras reinicios**: cada corrida usa `run_id` estable derivado de la pregunta, de modo que puede continuar después de cerrar Termux o reiniciar Android.
 - **RAG local + investigación web multi-fuente profesional**: recuperación local de fórmulas y conceptos, más búsquedas orquestadas en fuentes abiertas como Wikipedia, Crossref, arXiv y DuckDuckGo, con planificación por dominios, cobertura por intenciones, puntuación de evidencia y síntesis de riesgos.
 - **Simulación científica simplificada**: gravedad, arrastre, propulsión, trayectoria vertical simplificada y termoquímica básica.
+- **Cálculo analítico multi-dominio**: resolución simbólica ligera para derivadas, integrales, ecuaciones y matrices, además de estimaciones básicas para materiales y geología.
 - **ML dedicado y adaptable**: aprendizaje online específico del programa, con pesos propios, memoria persistente, priorización de fuentes, intensidad de investigación por consulta y posibilidad de ampliar con TensorFlow Lite o PyTorch.
 - **Optimización iterativa**: muestreo ligero con checkpoints, apto para procesos largos en Termux.
 - **Tolerancia a errores**: intenta continuar ante datos faltantes, archivos JSON corruptos, `MemoryError` y saturación del linker de Android (`create_new_page ... MAP_FAILED`).
+- **Modo degradado con respuesta útil**: si una integración secundaria falla o la investigación externa agota el tiempo presupuestado, el sistema evita el mensaje genérico y entrega una respuesta completa basada en conocimiento local, heurísticas y el contexto reciente.
 - **Segundo plano silencioso**: simulación, optimización y búsqueda externa se despachan mediante un ejecutor de fondo y la terminal sigue mostrando solo la respuesta final.
 - **Conectividad reforzada**: las búsquedas externas registran latencia, reintentos, tasa de éxito y salud por fuente para endurecer el acceso a internet a lo largo del tiempo.
 
@@ -23,6 +25,7 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
 - `src/knowledge.py`: recuperación local de conocimiento estilo RAG.
 - `src/storage.py`: SQLite + checkpoints JSON para reanudación.
 - `src/simulation.py`: simulación física/química simplificada con tareas pequeñas y guardado de progreso.
+- `src/calculator.py`: cálculo analítico ligero para matemáticas, materiales, geología y validaciones de consistencia.
 - `src/ml.py`: aprendizaje incremental ligero con degradación elegante si no hay backend móvil.
 - `src/optimizer.py`: optimización iterativa por muestreo ligero.
 - `src/reporting.py`: generación de la respuesta final en texto plano y reportes JSON.
@@ -54,6 +57,17 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
 ## Uso
 
 Cada línea de entrada se interpreta como una consulta nueva. El programa mantiene contexto reciente en SQLite y devuelve **solo la respuesta final**.
+
+Para consultas sencillas, el motor limita automáticamente la cantidad de búsquedas externas para evitar esperas excesivas en Termux; para consultas complejas amplía el presupuesto de investigación de forma adaptativa.
+
+Ejemplos matemáticos y analíticos:
+
+- `derivada de x^3 + 2*x en x=4`
+- `integral de sin(x) entre 0 y 3.1416`
+- `matriz [[1,2],[3,4]]`
+- `resuelve x^2 - 5*x + 6 = 0`
+- `analiza geología con densidad=2500 espesor=1200`
+- `evalúa material con carga=12000 area=0.008 resistencia=350000000`
 
 Ejemplos:
 

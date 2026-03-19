@@ -1,10 +1,12 @@
 """Interfaz conversacional principal que coordina conocimiento, simulación, ML y reportes."""
 from __future__ import annotations
 
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import json
 import uuid
 from typing import Any
 
+from src.calculator import AnalyticalCalculator
 from src.config import CONFIG
 from src.external import ExternalKnowledgeFetcher
 from src.knowledge import KnowledgeManager
@@ -30,6 +32,7 @@ class ChatbotInterface:
         storage: StorageManager,
         knowledge: KnowledgeManager,
         simulation: SimulationEngine,
+        calculator: AnalyticalCalculator,
         ml_model: LightweightMLModel,
         external_fetcher: ExternalKnowledgeFetcher,
         optimizer: IterativeOptimizer,
@@ -40,6 +43,7 @@ class ChatbotInterface:
         self.storage = storage
         self.knowledge = knowledge
         self.simulation = simulation
+        self.calculator = calculator
         self.ml_model = ml_model
         self.external_fetcher = external_fetcher
         self.optimizer = optimizer
@@ -125,6 +129,8 @@ class ChatbotInterface:
             'remaining_fuel_kg': 0.0,
             'payload_mass_kg': 0.0,
             'chemistry': {'estimated_efficiency': 0.0},
+            'math': {},
+            'materials': {},
             'resource_profile': {
                 'chunk_size': 0,
                 'max_memory_mb': CONFIG.max_task_memory_mb,
@@ -181,6 +187,73 @@ class ChatbotInterface:
             f"{round(float(latest['progress']) * 100, 1)} %, lo que confirma que el sistema conserva checkpoints reanudables tras reinicios."
         )
 
+    def _degraded_external_result(self, question: str, knowledge_summary: str, reason: str = '') -> dict[str, Any]:
+        excerpt = (
+            'La investigación web quedó degradada en esta corrida; se priorizó la base local y el razonamiento interno '
+            'para no dejar la consulta sin respuesta.'
+        )
+        if reason:
+            excerpt = f'{excerpt} Motivo resumido: {reason}.'
+        inferred_domains = self.external_fetcher.infer_domains(question, knowledge_summary)
+        return {
+            'status': 'degraded',
+            'queries_executed': 0,
+            'sources_consulted': {},
+            'plan': {'domains': inferred_domains, 'keywords': [], 'intents': ['overview'], 'tasks': [], 'source_weights': {}},
+            'findings': [],
+            'domains': inferred_domains,
+            'keywords': [],
+            'intents': ['overview'],
+            'source': 'local-knowledge-fallback',
+            'excerpt': excerpt,
+            'failures': [reason] if reason else [],
+            'synthesis': {
+                'quality_score': 0.0,
+                'feasibility_signal': 0.0,
+                'coverage': {},
+                'contradictions': ['La investigación externa no pudo completarse, así que la respuesta se apoya sobre todo en conocimiento local y heurísticas.'],
+                'research_gaps': ['Conviene reintentar con conectividad estable para ampliar evidencia y referencias.'],
+                'recommended_actions': [
+                    'Reintentar la búsqueda externa cuando haya red disponible.',
+                    'Usar la respuesta actual como análisis preliminar y no como validación definitiva.',
+                ],
+                'connectivity_profile': self.storage.connectivity_profile(),
+            },
+        }
+
+    def _fallback_response_text(self, question: str, exc: Exception) -> str:
+        recent_context = self.storage.recent_conversations(limit=3)
+        knowledge = self.knowledge.retrieve(question, recent_context=recent_context)
+        domains = self.external_fetcher.infer_domains(question, knowledge.summary)
+        profile = self._profile_question(question, domains)
+        simulation = self._build_general_analysis_frame(question, profile, knowledge.summary, {'run_id': f'fallback_{uuid.uuid4().hex[:8]}'})
+        external = self._degraded_external_result(question, knowledge.summary, safe_error_message(exc))
+        calculations = self.calculator.analyze(question, simulation, knowledge.summary)
+        ml_result = self.ml_model.predict(simulation)
+        analysis, conclusions = self._build_analysis(knowledge.summary, simulation, external, recent_context, ml_result)
+        payload = {
+            'analysis': sanitize_text(
+                'Se produjo una degradación controlada durante el procesamiento completo, pero el sistema evitó fallar y generó una respuesta útil en modo de contingencia. '
+                + analysis
+            ),
+            'conclusions': conclusions,
+            'simulation': simulation,
+            'ml': {
+                'prediction': ml_result.prediction,
+                'confidence': ml_result.confidence,
+                'hypotheses': ml_result.hypotheses,
+                'preferred_domains': ml_result.preferred_domains,
+                'research_intensity': ml_result.research_intensity,
+                'source_weights': ml_result.source_weights,
+                'model_state': ml_result.model_state,
+            },
+            'external': external,
+            'calculations': calculations,
+        }
+        response_text = self.report_writer.render_text(payload)
+        self.storage.save_conversation(question, response_text, json.dumps({'fallback_error': safe_error_message(exc)}, ensure_ascii=False))
+        return response_text
+
     def answer(self, question: str) -> dict[str, Any]:
         recent_context = self.storage.recent_conversations(limit=CONFIG.max_history_messages)
         knowledge = self.knowledge.retrieve(question, recent_context=recent_context)
@@ -214,13 +287,19 @@ class ChatbotInterface:
             optimization_future = self.background_executor.submit(self.optimizer.optimize, question, 8, self._progress)
             optimization = optimization_future.result()
 
-        external = external_future.result()
+        try:
+            external = external_future.result(timeout=max(12, CONFIG.internet_timeout_sec * 4))
+        except FutureTimeoutError:
+            external = self._degraded_external_result(question, knowledge.summary, 'timeout en investigación externa')
+        except Exception as exc:
+            external = self._degraded_external_result(question, knowledge.summary, safe_error_message(exc))
         self.storage.save_research_session(
             question,
             json.dumps(external, ensure_ascii=False),
             len(external.get('findings', [])),
             float(external.get('synthesis', {}).get('quality_score', 0.0)),
         )
+        calculations = self.calculator.analyze(question, simulation, knowledge.summary)
 
         analysis, conclusions = self._build_analysis(knowledge.summary, simulation, external, recent_context, ml_result)
         analysis = sanitize_text(analysis + self._resume_note())
@@ -243,6 +322,7 @@ class ChatbotInterface:
                 'model_state': ml_result.model_state,
             },
             'external': external,
+            'calculations': calculations,
             'optimization': optimization,
             'recent_context': [{'question': item['question'], 'created_at': item['created_at']} for item in recent_context[:3]],
         }
@@ -276,6 +356,6 @@ class ChatbotInterface:
         except Exception as exc:
             self.logger.exception('Error inesperado al responder')
             return {
-                'response_text': 'Ocurrió un error recuperable; el sistema mantuvo su estado y puedes reintentar con un problema más acotado.',
+                'response_text': self._fallback_response_text(question, exc),
                 'error': safe_error_message(exc),
             }

@@ -95,6 +95,11 @@ class StorageManager:
                     ('Trayectoria balística simplificada', 'physics', 'El alcance depende de velocidad inicial, gravedad, drag y tiempo de combustión efectivo.', 'local_seed'),
                     ('Análisis de sistemas complejos', 'systems', 'Dividir el problema en subsistemas, restricciones, riesgos, verificación y experimentos acelera la investigación seria.', 'local_seed'),
                     ('Ingeniería de misión', 'mission', 'Un diseño de misión debe separar factibilidad física, coste energético, seguridad, materiales y operaciones.', 'local_seed'),
+                    ('Cálculo diferencial', 'mathematics', 'd/dx(x^n) = n*x^(n-1). Las derivadas ayudan a analizar tasas de cambio, optimización y sensibilidad.', 'local_seed'),
+                    ('Álgebra lineal', 'mathematics', 'det(A) permite evaluar invertibilidad; A^-1 existe si det(A) != 0. Las matrices modelan sistemas y transformaciones.', 'local_seed'),
+                    ('Litostática básica', 'geology', 'sigma = rho * g * h aproxima la presión litostática de una columna geológica.', 'local_seed'),
+                    ('Patente técnica - motor cohete', 'patent', 'Las patentes describen configuraciones, materiales, cámaras y toberas útiles para recuperar restricciones de diseño.', 'local_seed'),
+                    ('Resistencia de materiales', 'materials', 'esfuerzo = fuerza / area. El factor de seguridad compara resistencia del material frente al esfuerzo aplicado.', 'local_seed'),
                 ]
                 conn.executemany(
                     'INSERT INTO knowledge_documents(title, category, content, source, created_at) VALUES (?, ?, ?, ?, ?)',

@@ -22,6 +22,7 @@ class ReportWriter:
         simulation = payload['simulation']
         ml = payload['ml']
         external = payload['external']
+        calculations = payload.get('calculations', {})
         chemistry = simulation.get('chemistry', {})
         synthesis = external.get('synthesis', {})
         lines = [
@@ -110,5 +111,14 @@ class ReportWriter:
                 f"- Mejor altitud hallada: {best_result.get('max_altitude_m', 'n/d')} m",
                 f"- Mejor delta-v hallado: {best_result.get('delta_v_m_s', 'n/d')} m/s",
             ])
+        if calculations.get('items') or calculations.get('variables'):
+            lines.extend([
+                '',
+                'Cálculo analítico complementario:',
+                f"- Estado: {calculations.get('status', 'n/d')}",
+                f"- Variables consideradas: {', '.join(calculations.get('variables', [])) or 'n/d'}",
+            ])
+            for item in calculations.get('items', [])[:6]:
+                lines.append(f"- [{item.get('type', 'analysis')}] {item.get('title', 'Resultado')}: {item.get('summary', 'n/d')}")
         lines.extend(['', 'Recomendaciones y conclusiones:', payload['conclusions']])
         return '\n'.join(lines)
