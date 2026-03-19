@@ -6,7 +6,7 @@ import re
 
 def clean_input(text: str) -> str:
     cleaned = str(text or '').lower().strip()
-    cleaned = re.sub(r'[`~^*_#|<>\[\]{}]+', ' ', cleaned)
+    cleaned = re.sub(r'[`~_#|<>\[\]{}]+', ' ', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned)
     return cleaned.strip()
 
