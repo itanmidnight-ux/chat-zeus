@@ -12,21 +12,27 @@ class CreationPlan:
     objective: str
     constraints: list[str]
     requirements: list[str]
+    domains: list[str]
+    hypotheses: list[str]
     approach: list[str]
     validation: list[str]
+    optimization: list[str]
 
 
 class CreationEngine:
     def build_solution(self, question: str, context: dict[str, str] | None = None) -> str:
         plan = self.plan(question, context=context)
         sections = [
-            f"Objetivo: {plan.objective}.",
-            f"Restricciones/criterios: {self._join_items(plan.constraints)}.",
+            f"Resultado final: {plan.objective}.",
+            f"Explicación breve: Dominios clave: {self._join_items(plan.domains)}.",
+            f"Hipótesis viables: {self._join_items(plan.hypotheses)}.",
             f"Diseño propuesto: {self._join_items(plan.approach)}.",
-            f"Verificación: {self._join_items(plan.validation)}.",
+            f"Factibilidad y validación: {self._join_items(plan.validation)}.",
         ]
         if plan.requirements:
-            sections.insert(2, f"Requisitos detectados: {self._join_items(plan.requirements)}.")
+            sections.insert(3, f"Requisitos detectados: {self._join_items(plan.requirements)}.")
+        if plan.optimization:
+            sections.append(f"Mejora futura: {self._join_items(plan.optimization)}.")
         return ' '.join(section for section in sections if section)
 
     def plan(self, question: str, context: dict[str, str] | None = None) -> CreationPlan:
@@ -35,9 +41,12 @@ class CreationEngine:
         objective = self._extract_objective(text)
         constraints = self._extract_constraints(text)
         requirements = self._extract_requirements(text, context)
-        approach = self._build_approach(objective, constraints, requirements)
-        validation = self._build_validation(objective, constraints)
-        return CreationPlan(objective, constraints, requirements, approach, validation)
+        domains = self._infer_domains(text, objective)
+        hypotheses = self._build_hypotheses(objective, constraints, requirements, domains)
+        approach = self._build_approach(objective, constraints, requirements, domains)
+        validation = self._build_validation(objective, constraints, domains)
+        optimization = self._build_optimization(constraints, domains)
+        return CreationPlan(objective, constraints, requirements, domains, hypotheses, approach, validation, optimization)
 
     def _extract_objective(self, text: str) -> str:
         trigger_patterns = [r'(?:design|build|create|generate|write|diseña|disena|crea|genera|escribe)\s+(.+)']
@@ -69,7 +78,38 @@ class CreationEngine:
             requirements.append(f"personalizar con el usuario {context['name']}")
         return requirements
 
-    def _build_approach(self, objective: str, constraints: list[str], requirements: list[str]) -> list[str]:
+    def _infer_domains(self, text: str, objective: str) -> list[str]:
+        domains: list[str] = []
+        domain_map = {
+            'physics': ('cohete', 'nave', 'orbita', 'delta-v', 'empuje', 'propuls'),
+            'engineering': ('sistema', 'arquitectura', 'control', 'estructura', 'dise'),
+            'materials': ('material', 'aleaci', 'compuesto', 'térmic', 'termic'),
+            'energy': ('energ', 'bater', 'combustible', 'potencia'),
+            'control systems': ('control', 'guiado', 'naveg', 'sensor', 'feedback'),
+            'memory': ('memoria', 'memory', 'contexto', 'context'),
+            'conversation': ('conversa', 'dialog', 'chat'),
+            'validation': ('valid', 'verific', 'test'),
+        }
+        lowered = f"{text} {objective}".lower()
+        for name, markers in domain_map.items():
+            if any(marker in lowered for marker in markers):
+                domains.append(name)
+        return domains or ['engineering', 'validation']
+
+    def _build_hypotheses(self, objective: str, constraints: list[str], requirements: list[str], domains: list[str]) -> list[str]:
+        hypotheses = [
+            f"usar una arquitectura modular para {objective}",
+            'mantener memoria compacta con prioridades para contexto útil',
+        ]
+        if 'physics' in domains or 'energy' in domains:
+            hypotheses.append('evaluar balances aproximados de masa, energía y estabilidad con modelos simplificados')
+        if requirements:
+            hypotheses.append('añadir una etapa final de validación para asegurar que la salida sea utilizable')
+        if any('bajo consumo de recursos' in item for item in constraints):
+            hypotheses.append('limitar pasos, tamaño de contexto y almacenamiento para evitar sobrecarga')
+        return hypotheses[:4]
+
+    def _build_approach(self, objective: str, constraints: list[str], requirements: list[str], domains: list[str]) -> list[str]:
         steps = [
             f"descomponer '{objective}' en módulos responsables de entender, decidir y responder",
             'representar el estado de la sesión con memoria compacta y actualizable',
@@ -77,18 +117,30 @@ class CreationEngine:
         ]
         if requirements:
             steps.append('incorporar validación previa a la salida para cumplir requisitos detectados')
+        if 'physics' in domains or 'engineering' in domains:
+            steps.append('comparar alternativas y elegir la de mejor factibilidad con aproximaciones simples')
         if any('recursos' in item for item in constraints):
             steps.append('aplicar límites de longitud y pasos para evitar consumo excesivo')
         return steps
 
-    def _build_validation(self, objective: str, constraints: list[str]) -> list[str]:
+    def _build_validation(self, objective: str, constraints: list[str], domains: list[str]) -> list[str]:
         checks = [
             f"confirmar que la respuesta siga el objetivo '{objective}'",
             'revisar consistencia entre intención, contexto y salida final',
         ]
+        if 'physics' in domains or 'energy' in domains:
+            checks.append('usar estimaciones simplificadas para comprobar estabilidad, energía o desempeño')
         if constraints:
             checks.append('verificar que las restricciones aparezcan reflejadas en la solución')
         return checks
+
+    def _build_optimization(self, constraints: list[str], domains: list[str]) -> list[str]:
+        improvements = ['reducir complejidad operacional manteniendo la funcionalidad principal']
+        if 'energy' in domains or 'physics' in domains:
+            improvements.append('optimizar masa, consumo energético y margen de seguridad')
+        if any('bajo consumo de recursos' in item for item in constraints):
+            improvements.append('recortar memoria y pasos de cómputo con procesamiento por bloques')
+        return improvements[:3]
 
     @staticmethod
     def _join_items(items: list[str]) -> str:
