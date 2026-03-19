@@ -17,7 +17,7 @@ def build_app() -> ChatbotInterface:
     logger = setup_logging(CONFIG.logs_dir)
     storage = StorageManager(CONFIG.db_path, CONFIG.checkpoint_dir)
     background_executor = BackgroundExecutor(max_workers=CONFIG.max_workers)
-    autonomous_system = AutonomousReasoningSystem(memory_path=CONFIG.models_dir / 'agent_memory.json')
+    autonomous_system = AutonomousReasoningSystem(storage=storage, memory_path=CONFIG.models_dir / 'agent_memory.json')
     return ChatbotInterface(storage, autonomous_system, background_executor, logger)
 
 

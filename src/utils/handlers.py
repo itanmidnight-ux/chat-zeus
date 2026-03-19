@@ -12,7 +12,7 @@ def handle_simple_queries(question: str) -> str | None:
     if text in _GREETINGS:
         return 'Hola. ¿En qué puedo ayudarte?'
     if any(token in text for token in ('qué hora', 'que hora', 'hora', 'time')):
-        return now.strftime('%H:%M:%S')
+        return f"Son las {now.strftime('%H:%M:%S')}."
     if any(token in text for token in ('fecha', 'date', 'día', 'dia')):
-        return now.strftime('%Y-%m-%d')
+        return f"La fecha es {now.strftime('%Y-%m-%d')}."
     return None

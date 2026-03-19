@@ -1,31 +1,20 @@
-"""Advanced intent detection using rules and simple patterns."""
+"""Advanced intent detection using lightweight semantic features plus rules."""
 from __future__ import annotations
 
-import re
+from src.core.understanding import SemanticUnderstandingEngine
 
-
-_MATH_PATTERN = re.compile(r'[-+/*()0-9.^% ]{3,}')
+_UNDERSTANDING = SemanticUnderstandingEngine()
 
 
 def detect_intent_advanced(question: str) -> str:
-    text = question.lower().strip()
-    if not text:
+    result = _UNDERSTANDING.analyze(question)
+    intent = result.selected_intent
+    if intent == 'execution':
         return 'analysis'
-
-    if text.startswith('python:') or text.startswith('code:'):
-        return 'analysis'
-    if any(token in text for token in ('who are you', 'quien eres', 'qué eres', 'what are you', 'your name')):
-        return 'identity'
-    if any(token in text for token in ('time', 'hora', 'qué hora', 'que hora')):
-        return 'time'
-    if any(token in text for token in ('date', 'fecha', 'día', 'dia', 'today')):
-        return 'date'
-    if any(token in text for token in ('create', 'build', 'design', 'generate', 'write', 'explica', 'explain', 'formula', 'idea')):
-        return 'creation'
-    if any(token in text for token in ('analyze', 'analysis', 'compare', 'why', 'por qué', 'porque', 'reason')):
-        return 'analysis'
-    if _MATH_PATTERN.fullmatch(text) or any(marker in text for marker in ('calculate', 'solve', 'cuánto es', 'cuanto es')):
-        return 'math'
-    if any(token in text for token in ('who', 'what', 'when', 'where', 'richest', 'capital', 'hombre más rico', 'hombre mas rico')):
+    if intent == 'simple':
+        if result.intent_scores.get('time', 0.0) >= 0.75:
+            return 'time'
+        if result.intent_scores.get('date', 0.0) >= 0.75:
+            return 'date'
         return 'fact'
-    return 'fact' if '?' in text or len(text.split()) <= 6 else 'analysis'
+    return intent
