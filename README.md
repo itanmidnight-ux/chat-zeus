@@ -6,11 +6,13 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
 
 - **Salida silenciosa**: la terminal muestra un encabezado ligero, un prompt claro para escribir y luego solo la respuesta final en texto plano para cada pregunta.
 - **Persistencia transparente**: checkpoints JSON y base SQLite para historial, conocimiento, aprendizaje y reanudación.
+- **Reanudación tras reinicios**: cada corrida usa `run_id` estable derivado de la pregunta, de modo que puede continuar después de cerrar Termux o reiniciar Android.
 - **RAG local ligero**: recuperación de fórmulas y conceptos desde una base científica local.
 - **Simulación científica simplificada**: gravedad, arrastre, propulsión, trayectoria vertical simplificada y termoquímica básica.
 - **ML ligero adaptable**: heurísticas incrementales con autodetección opcional de backends compatibles como TensorFlow Lite o PyTorch.
 - **Optimización iterativa**: muestreo ligero con checkpoints, apto para procesos largos en Termux.
-- **Tolerancia a errores**: intenta continuar ante datos faltantes, archivos JSON corruptos o fallos parciales.
+- **Tolerancia a errores**: intenta continuar ante datos faltantes, archivos JSON corruptos, `MemoryError` y saturación del linker de Android (`create_new_page ... MAP_FAILED`).
+- **Segundo plano silencioso**: simulación, optimización y búsqueda externa se despachan mediante un ejecutor de fondo y la terminal sigue mostrando solo la respuesta final.
 
 ## Estructura
 
@@ -24,6 +26,7 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
 - `src/optimizer.py`: optimización iterativa por muestreo ligero.
 - `src/reporting.py`: generación de la respuesta final en texto plano y reportes JSON.
 - `src/termux_ui.py`: interfaz textual ligera con prompt claro y salida limpia para Termux.
+- `src/worker.py`: ejecutor silencioso de tareas en segundo plano, limitado a pocos workers.
 - `data/chatbot/`, `data/models/`, `data/data/`, `data/logs/`: carpetas compatibles con el flujo pedido.
 
 ## Instalación en Termux
@@ -56,6 +59,7 @@ Ejemplos:
 - `Analiza un cohete suborbital con payload=150 fuel=260 thrust=19000 steps=600`
 - `Optimiza el diseño de un lanzador ligero para mayor altitud`
 - `Calcula una trayectoria simple y resume fórmulas para combustible hipergólico`
+- `Analiza una etapa con carga útil=90 combustible=210 empuje=16000 mezcla=2.4 pasos=480`
 
 Para terminar:
 
@@ -78,6 +82,14 @@ La estructura creada será:
 - `/data/models/`
 - `/data/data/`
 - `/data/logs/`
+
+Cada simulación y optimización escribe:
+
+- un checkpoint JSON incremental en `data/data/checkpoints/`,
+- un estado resumido en SQLite,
+- y un reporte final en `data/data/reports/`.
+
+Si interrumpes Termux y repites la misma consulta, el `run_id` estable permite reusar el progreso guardado.
 
 ## Alcance científico actual
 

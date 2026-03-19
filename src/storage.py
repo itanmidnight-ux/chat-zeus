@@ -120,6 +120,13 @@ class StorageManager:
             row = conn.execute('SELECT * FROM simulation_runs WHERE run_id = ?', (run_id,)).fetchone()
         return dict(row) if row else None
 
+    def recover_incomplete_runs(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT run_id, question, state, progress, result_json, updated_at FROM simulation_runs WHERE state != 'completed' ORDER BY updated_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def append_ml_observation(self, features_json: str, target: float) -> None:
         with self._connect() as conn:
             conn.execute(

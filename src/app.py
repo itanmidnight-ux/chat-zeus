@@ -12,6 +12,7 @@ from src.simulation import SimulationEngine
 from src.storage import StorageManager
 from src.termux_ui import TermuxUI
 from src.utils import apply_soft_memory_limit, ensure_environment_defaults, setup_logging
+from src.worker import BackgroundExecutor
 
 
 def build_app() -> ChatbotInterface:
@@ -26,7 +27,8 @@ def build_app() -> ChatbotInterface:
     external_fetcher = ExternalKnowledgeFetcher(timeout_sec=CONFIG.internet_timeout_sec)
     optimizer = IterativeOptimizer(simulation, storage)
     report_writer = ReportWriter(CONFIG.report_dir)
-    return ChatbotInterface(storage, knowledge, simulation, ml_model, external_fetcher, optimizer, report_writer, logger)
+    background_executor = BackgroundExecutor(max_workers=CONFIG.max_workers)
+    return ChatbotInterface(storage, knowledge, simulation, ml_model, external_fetcher, optimizer, report_writer, background_executor, logger)
 
 
 def main() -> None:

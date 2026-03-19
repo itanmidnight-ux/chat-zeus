@@ -1,8 +1,8 @@
 """Utilidades generales de E/S, JSON, texto y manejo de errores."""
 from __future__ import annotations
 
-import json
 import contextlib
+import json
 import logging
 import os
 import re
@@ -43,8 +43,10 @@ def read_json(path: Path, default: Any) -> Any:
 
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open('w', encoding='utf-8') as handle:
+    temp_path = path.with_suffix(path.suffix + '.tmp')
+    with temp_path.open('w', encoding='utf-8') as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False)
+    temp_path.replace(path)
 
 
 def safe_error_message(exc: Exception) -> str:
@@ -63,6 +65,19 @@ def sanitize_text(text: str) -> str:
     return re.sub(r'\s+', ' ', text).strip()
 
 
+def extract_numeric_value(text: str, pattern: str, default: float | int | None = None) -> float | int | None:
+    match = re.search(pattern, text, re.IGNORECASE)
+    if not match:
+        return default
+    raw = match.group(1).replace(',', '.')
+    if raw.isdigit():
+        return int(raw)
+    with contextlib.suppress(ValueError):
+        value = float(raw)
+        return int(value) if value.is_integer() else value
+    return default
+
+
 def soft_memory_limit_bytes(megabytes: int) -> int:
     return max(32, megabytes) * 1024 * 1024
 
@@ -70,6 +85,10 @@ def soft_memory_limit_bytes(megabytes: int) -> int:
 def ensure_environment_defaults() -> None:
     os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
     os.environ.setdefault('PYTHONUNBUFFERED', '1')
+    os.environ.setdefault('OMP_NUM_THREADS', '1')
+    os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+    os.environ.setdefault('MKL_NUM_THREADS', '1')
+    os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
 
 
 def apply_soft_memory_limit(megabytes: int) -> None:
@@ -83,3 +102,16 @@ def apply_soft_memory_limit(megabytes: int) -> None:
         target_soft = limit if current_soft in (-1, resource.RLIM_INFINITY) else min(current_soft, limit)
         target_hard = current_hard if current_hard not in (-1, resource.RLIM_INFINITY) else max(limit, target_soft)
         resource.setrlimit(resource.RLIMIT_AS, (target_soft, target_hard))
+
+
+def detect_linker_memory_issue(exc: BaseException) -> bool:
+    message = safe_error_message(exc)
+    markers = [
+        'create_new_page',
+        'MAP_FAILED',
+        'linker_block_allocator',
+        'cannot allocate memory',
+        'std::bad_alloc',
+    ]
+    lowered = message.lower()
+    return any(marker.lower() in lowered for marker in markers)
