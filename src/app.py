@@ -36,6 +36,7 @@ def build_app() -> ChatbotInterface:
 def main() -> None:
     app = build_app()
     ui = TermuxUI()
+    print(ui.render_welcome())
     try:
         while True:
             try:
