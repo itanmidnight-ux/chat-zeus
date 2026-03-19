@@ -25,6 +25,9 @@ class AppConfig:
     max_external_queries: int = 8
     internet_max_retries: int = 3
     max_history_messages: int = 8
+    max_conversation_context_chars: int = 4096
+    storage_stream_batch_size: int = 16
+    storage_retry_attempts: int = 2
     max_inline_context_chars: int = 2000
     max_checkpoint_history: int = 48
     hard_step_cap: int = 480

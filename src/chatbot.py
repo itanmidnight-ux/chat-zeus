@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from concurrent.futures import TimeoutError as FutureTimeoutError
+import gc
 import json
 import uuid
 from typing import Any
@@ -231,7 +232,7 @@ class ChatbotInterface:
         }
 
     def _fallback_response_text(self, question: str, exc: Exception) -> str:
-        recent_context = self.storage.recent_conversations(limit=3)
+        recent_context = self.storage.recent_conversations(limit=min(3, CONFIG.max_history_messages))
         knowledge = self.knowledge.retrieve(question, recent_context=recent_context)
         domains = self.external_fetcher.infer_domains(question, knowledge.summary)
         profile = self._profile_question(question, domains)
@@ -261,6 +262,8 @@ class ChatbotInterface:
         }
         response_text = self.report_writer.render_text(payload)
         self.storage.save_conversation(question, response_text, json.dumps({'fallback_error': safe_error_message(exc)}, ensure_ascii=False))
+        del recent_context, knowledge, domains, profile, simulation, external, calculations, ml_result, payload
+        gc.collect()
         return response_text
 
     def answer(self, question: str) -> dict[str, Any]:
@@ -337,9 +340,10 @@ class ChatbotInterface:
         }
         report_path = self.report_writer.save(question, payload)
         response_text = self.report_writer.render_text(payload)
-        self.storage.save_conversation(question, response_text, json.dumps(payload, ensure_ascii=False))
+        self.storage.save_conversation(question, response_text, json.dumps({'profile': profile, 'simulation': simulation.get('resource_profile', {}), 'external_status': external.get('status', 'ok')}, ensure_ascii=False))
         payload['report_path'] = str(report_path)
         payload['response_text'] = response_text
+        gc.collect()
         return payload
 
     def safe_answer(self, question: str) -> dict[str, Any]:
@@ -347,17 +351,21 @@ class ChatbotInterface:
             return self.answer(question)
         except MemoryError as exc:
             self.logger.error('Se detectó un fallo de memoria; activando respuesta degradada.')
+            gc.collect()
             return {'response_text': self._fallback_response_text(question, exc), 'error': safe_error_message(exc)}
         except OSError as exc:
             if detect_linker_memory_issue(exc):
                 self.logger.error('Se detectó saturación del linker; activando respuesta degradada.')
+                gc.collect()
                 return {'response_text': self._fallback_response_text(question, exc), 'error': safe_error_message(exc)}
             raise
         except ZeroDivisionError as exc:
             self.logger.error('Se evitó una división por cero; activando respuesta degradada.')
+            gc.collect()
             return {'response_text': self._fallback_response_text(question, exc), 'error': safe_error_message(exc)}
         except Exception as exc:
             self.logger.exception('Error inesperado al responder')
+            gc.collect()
             return {
                 'response_text': self._fallback_response_text(question, exc),
                 'error': safe_error_message(exc),

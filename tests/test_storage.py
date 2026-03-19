@@ -49,3 +49,27 @@ class StorageManagerDiskIoRecoveryTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class StorageManagerStreamingTests(unittest.TestCase):
+    def test_recent_conversations_respect_configured_limit_and_trim_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = StorageManager(Path(tmp) / 'knowledge.sqlite3', Path(tmp) / 'checkpoints')
+            for index in range(12):
+                storage.save_conversation(f'q{index}', f'r{index}', '{"payload":"' + ('x' * 6000) + '"}')
+
+            recent = storage.recent_conversations(limit=50)
+
+            self.assertEqual(len(recent), 8)
+            self.assertEqual(recent[-1]['question'], 'q11')
+            self.assertLessEqual(len(recent[-1]['context_json']), 4096)
+
+    def test_iter_recent_conversations_streams_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = StorageManager(Path(tmp) / 'knowledge.sqlite3', Path(tmp) / 'checkpoints')
+            for index in range(3):
+                storage.save_conversation(f'q{index}', f'r{index}', '{}')
+
+            streamed = list(storage.iter_recent_conversations(limit=2))
+
+            self.assertEqual([item['question'] for item in streamed], ['q2', 'q1'])
