@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import contextlib
 import logging
 import os
 import re
@@ -69,3 +70,16 @@ def soft_memory_limit_bytes(megabytes: int) -> int:
 def ensure_environment_defaults() -> None:
     os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
     os.environ.setdefault('PYTHONUNBUFFERED', '1')
+
+
+def apply_soft_memory_limit(megabytes: int) -> None:
+    try:
+        import resource
+    except Exception:
+        return
+    limit = soft_memory_limit_bytes(megabytes)
+    with contextlib.suppress(Exception):
+        current_soft, current_hard = resource.getrlimit(resource.RLIMIT_AS)
+        target_soft = limit if current_soft in (-1, resource.RLIM_INFINITY) else min(current_soft, limit)
+        target_hard = current_hard if current_hard not in (-1, resource.RLIM_INFINITY) else max(limit, target_soft)
+        resource.setrlimit(resource.RLIMIT_AS, (target_soft, target_hard))

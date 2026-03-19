@@ -10,11 +10,13 @@ from src.optimizer import IterativeOptimizer
 from src.reporting import ReportWriter
 from src.simulation import SimulationEngine
 from src.storage import StorageManager
-from src.utils import ensure_environment_defaults, setup_logging
+from src.termux_ui import TermuxUI
+from src.utils import apply_soft_memory_limit, ensure_environment_defaults, setup_logging
 
 
 def build_app() -> ChatbotInterface:
     ensure_environment_defaults()
+    apply_soft_memory_limit(CONFIG.max_task_memory_mb)
     ensure_directories()
     logger = setup_logging(CONFIG.logs_dir)
     storage = StorageManager(CONFIG.db_path, CONFIG.checkpoint_dir)
@@ -22,16 +24,18 @@ def build_app() -> ChatbotInterface:
     simulation = SimulationEngine(storage, chunk_size=CONFIG.simulation_chunk_size)
     ml_model = LightweightMLModel(storage)
     external_fetcher = ExternalKnowledgeFetcher(timeout_sec=CONFIG.internet_timeout_sec)
-    optimizer = IterativeOptimizer(simulation)
+    optimizer = IterativeOptimizer(simulation, storage)
     report_writer = ReportWriter(CONFIG.report_dir)
     return ChatbotInterface(storage, knowledge, simulation, ml_model, external_fetcher, optimizer, report_writer, logger)
 
 
 def main() -> None:
     app = build_app()
+    ui = TermuxUI()
+    print(ui.render_welcome())
     while True:
         try:
-            question = input().strip()
+            question = input(ui.prompt()).strip()
         except EOFError:
             break
         if not question:
@@ -39,4 +43,4 @@ def main() -> None:
         if question.lower() in {'salir', 'exit', 'quit'}:
             break
         result = app.safe_answer(question)
-        print(result.get('response_text', 'Sin respuesta disponible.'))
+        print(ui.render_response(result.get('response_text', 'Sin respuesta disponible.')))

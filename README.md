@@ -4,7 +4,7 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
 
 ## Características principales
 
-- **Salida silenciosa**: la terminal solo recibe la respuesta final en texto plano para cada pregunta.
+- **Salida silenciosa**: la terminal muestra un encabezado ligero, un prompt claro para escribir y luego solo la respuesta final en texto plano para cada pregunta.
 - **Persistencia transparente**: checkpoints JSON y base SQLite para historial, conocimiento, aprendizaje y reanudación.
 - **RAG local ligero**: recuperación de fórmulas y conceptos desde una base científica local.
 - **Simulación científica simplificada**: gravedad, arrastre, propulsión, trayectoria vertical simplificada y termoquímica básica.
@@ -23,6 +23,7 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
 - `src/ml.py`: aprendizaje incremental ligero con degradación elegante si no hay backend móvil.
 - `src/optimizer.py`: optimización iterativa por muestreo ligero.
 - `src/reporting.py`: generación de la respuesta final en texto plano y reportes JSON.
+- `src/termux_ui.py`: interfaz textual ligera con prompt claro y salida limpia para Termux.
 - `data/chatbot/`, `data/models/`, `data/data/`, `data/logs/`: carpetas compatibles con el flujo pedido.
 
 ## Instalación en Termux
@@ -89,3 +90,8 @@ El sistema puede ayudar con preguntas sobre:
 - hipótesis de mejora y predicciones ligeras.
 
 No sustituye herramientas de alta fidelidad como CFD, análisis estructural detallado ni validación aeroespacial certificada.
+
+
+## Interfaz en Termux
+
+Al iniciar, la app muestra un encabezado corto y un prompt `Pregunta >` para indicar claramente cuándo introducir la consulta. No se imprimen logs, trazas ni progreso interno en la terminal; esos datos quedan en archivos internos o checkpoints si son necesarios para reanudar procesos largos.
