@@ -36,7 +36,6 @@ def build_app() -> ChatbotInterface:
 def main() -> None:
     app = build_app()
     ui = TermuxUI()
-    print(ui.render_welcome())
     try:
         while True:
             try:
@@ -51,6 +50,6 @@ def main() -> None:
             if question.lower() in {'salir', 'exit', 'quit'}:
                 break
             result = app.safe_answer(question)
-            print(ui.render_response(result.get('response_text', 'Sin respuesta disponible.')))
+            print(result.get('response_text', 'Sin respuesta disponible.'))
     finally:
         app.background_executor.shutdown()

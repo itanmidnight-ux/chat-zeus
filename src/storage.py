@@ -1,11 +1,13 @@
 """Persistencia en SQLite y checkpoints JSON para reanudación."""
 from __future__ import annotations
 
+import gc
 import json
 import sqlite3
+from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from src.config import CONFIG
 from src.utils import read_json, utc_now_iso, write_json
@@ -95,6 +97,10 @@ class StorageManager:
         self.checkpoint_dir = checkpoint_dir
         self._journal_mode = 'WAL'
         self._temp_store = 'FILE'
+        self._stream_batch_size = max(4, min(CONFIG.storage_stream_batch_size, 128))
+        self._recent_conversation_limit = max(1, CONFIG.max_history_messages)
+        self._recent_context_chars = max(256, CONFIG.max_conversation_context_chars)
+        self._retry_attempts = max(1, CONFIG.storage_retry_attempts)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -134,6 +140,56 @@ class StorageManager:
             update_attr=('_temp_store', 'MEMORY'),
         )
         conn.execute('PRAGMA cache_size=-2048')
+        conn.execute('PRAGMA mmap_size=0')
+
+    @contextmanager
+    def _streaming_cursor(self, sql: str, params: tuple[Any, ...] = ()) -> Iterator[sqlite3.Cursor]:
+        conn = self._connect()
+        cursor: sqlite3.Cursor | None = None
+        try:
+            cursor = conn.execute(sql, params)
+            yield cursor
+        finally:
+            with suppress(Exception):
+                if cursor is not None:
+                    cursor.close()
+            with suppress(Exception):
+                conn.close()
+
+    def _execute_write(self, sql: str, params: tuple[Any, ...]) -> None:
+        last_error: Exception | None = None
+        for _ in range(self._retry_attempts):
+            try:
+                with self._connect() as conn:
+                    conn.execute(sql, params)
+                return
+            except (MemoryError, sqlite3.OperationalError) as exc:
+                last_error = exc
+                gc.collect()
+                if isinstance(exc, sqlite3.OperationalError) and not self._is_disk_io_error(exc):
+                    raise
+        if last_error is not None:
+            raise last_error
+
+    def _trim_context_json(self, context_json: str) -> str:
+        trimmed = context_json.strip()
+        if len(trimmed) <= self._recent_context_chars:
+            return trimmed
+        window = trimmed[: self._recent_context_chars]
+        if '{' in window and '}' not in window:
+            preview_limit = max(32, self._recent_context_chars - 64)
+            return json.dumps({'preview': window[:preview_limit], 'truncated': True}, ensure_ascii=False)
+        return window
+
+    def _row_dict_stream(self, cursor: sqlite3.Cursor) -> Iterator[dict[str, Any]]:
+        while True:
+            rows = cursor.fetchmany(self._stream_batch_size)
+            if not rows:
+                break
+            for row in rows:
+                yield dict(row)
+            del rows
+            gc.collect()
 
     def _seed_documents(self, conn: sqlite3.Connection) -> None:
         seed_count = conn.execute('SELECT COUNT(*) FROM knowledge_documents').fetchone()[0]
@@ -186,58 +242,62 @@ class StorageManager:
             like = f'%{keyword}%'
             values.extend([like, like, like])
         sql = f'SELECT title, category, content, source FROM knowledge_documents WHERE {clauses} LIMIT ?'
-        with self._connect() as conn:
-            rows = conn.execute(sql, (*values, limit)).fetchall()
-        return [dict(row) for row in rows]
+        result: list[dict[str, Any]] = []
+        with self._streaming_cursor(sql, (*values, limit)) as cursor:
+            for row in self._row_dict_stream(cursor):
+                result.append(row)
+        return result
 
     def save_conversation(self, question: str, response: str, context_json: str) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                'INSERT INTO conversations(question, response, context_json, created_at) VALUES (?, ?, ?, ?)',
-                (question, response, context_json, utc_now_iso()),
-            )
+        self._execute_write(
+            'INSERT INTO conversations(question, response, context_json, created_at) VALUES (?, ?, ?, ?)',
+            (question, response, self._trim_context_json(context_json), utc_now_iso()),
+        )
 
-    def recent_conversations(self, limit: int = 5) -> list[dict[str, Any]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                'SELECT question, response, context_json, created_at FROM conversations ORDER BY id DESC LIMIT ?',
-                (limit,),
-            ).fetchall()
-        return [dict(row) for row in rows]
+    def iter_recent_conversations(self, limit: int | None = None) -> Iterator[dict[str, Any]]:
+        effective_limit = max(1, min(int(limit or self._recent_conversation_limit), self._recent_conversation_limit))
+        with self._streaming_cursor(
+            'SELECT question, response, context_json, created_at FROM conversations ORDER BY id DESC LIMIT ?',
+            (effective_limit,),
+        ) as cursor:
+            for row in self._row_dict_stream(cursor):
+                row['context_json'] = self._trim_context_json(str(row.get('context_json', '')))
+                yield row
+
+    def recent_conversations(self, limit: int | None = None) -> list[dict[str, Any]]:
+        items = list(self.iter_recent_conversations(limit=limit))
+        items.reverse()
+        return items
 
     def save_run_state(self, run_id: str, question: str, state: str, progress: float, result_json: str) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                '''
-                INSERT INTO simulation_runs(run_id, question, state, progress, result_json, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(run_id) DO UPDATE SET
-                    state=excluded.state,
-                    progress=excluded.progress,
-                    result_json=excluded.result_json,
-                    updated_at=excluded.updated_at
-                ''',
-                (run_id, question, state, progress, result_json, utc_now_iso()),
-            )
+        self._execute_write(
+            '''
+            INSERT INTO simulation_runs(run_id, question, state, progress, result_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                state=excluded.state,
+                progress=excluded.progress,
+                result_json=excluded.result_json,
+                updated_at=excluded.updated_at
+            ''',
+            (run_id, question, state, progress, self._trim_context_json(result_json), utc_now_iso()),
+        )
 
     def load_run_state(self, run_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            row = conn.execute('SELECT * FROM simulation_runs WHERE run_id = ?', (run_id,)).fetchone()
+        with self._streaming_cursor('SELECT * FROM simulation_runs WHERE run_id = ?', (run_id,)) as cursor:
+            row = cursor.fetchone()
         return dict(row) if row else None
 
     def recover_incomplete_runs(self) -> list[dict[str, Any]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT run_id, question, state, progress, result_json, updated_at FROM simulation_runs WHERE state != 'completed' ORDER BY updated_at DESC"
-            ).fetchall()
-        return [dict(row) for row in rows]
+        sql = "SELECT run_id, question, state, progress, result_json, updated_at FROM simulation_runs WHERE state != 'completed' ORDER BY updated_at DESC"
+        with self._streaming_cursor(sql) as cursor:
+            return list(self._row_dict_stream(cursor))
 
     def append_ml_observation(self, features_json: str, target: float) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                'INSERT INTO ml_observations(features_json, target, created_at) VALUES (?, ?, ?)',
-                (features_json, target, utc_now_iso()),
-            )
+        self._execute_write(
+            'INSERT INTO ml_observations(features_json, target, created_at) VALUES (?, ?, ?)',
+            (self._trim_context_json(features_json), target, utc_now_iso()),
+        )
 
     def load_ml_observations(self, limit: int | None = None) -> list[dict[str, Any]]:
         sql = 'SELECT features_json, target FROM ml_observations ORDER BY id DESC'
@@ -245,23 +305,22 @@ class StorageManager:
         if limit is not None:
             sql += ' LIMIT ?'
             params = (max(1, int(limit)),)
-        with self._connect() as conn:
-            rows = conn.execute(sql, params).fetchall()
-        payload = [dict(row) for row in rows]
+        with self._streaming_cursor(sql, params) as cursor:
+            payload = list(self._row_dict_stream(cursor))
         payload.reverse()
         return payload
 
     def ml_observation_summary(self) -> dict[str, float]:
-        with self._connect() as conn:
-            row = conn.execute(
-                '''
-                SELECT COUNT(*) AS samples_seen,
-                       AVG(target) AS avg_target,
-                       MIN(target) AS min_target,
-                       MAX(target) AS max_target
-                FROM ml_observations
-                '''
-            ).fetchone()
+        with self._streaming_cursor(
+            '''
+            SELECT COUNT(*) AS samples_seen,
+                   AVG(target) AS avg_target,
+                   MIN(target) AS min_target,
+                   MAX(target) AS max_target
+            FROM ml_observations
+            '''
+        ) as cursor:
+            row = cursor.fetchone()
         return {
             'samples_seen': float(row['samples_seen'] or 0.0),
             'avg_target': float(row['avg_target'] or 0.0),
@@ -274,7 +333,7 @@ class StorageManager:
         with self._connect() as conn:
             conn.execute(
                 'INSERT INTO research_sessions(question, profile_json, findings_count, quality_score, created_at) VALUES (?, ?, ?, ?, ?)',
-                (question, profile_json, findings_count, quality_score, created_at),
+                (question, self._trim_context_json(profile_json), findings_count, quality_score, created_at),
             )
             profile = read_json_string(profile_json)
             for item in profile.get('findings', [])[:12]:
@@ -285,64 +344,59 @@ class StorageManager:
                 )
 
     def load_recent_research_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                'SELECT question, profile_json, findings_count, quality_score, created_at FROM research_sessions ORDER BY id DESC LIMIT ?',
-                (limit,),
-            ).fetchall()
-        return [dict(row) for row in rows]
+        with self._streaming_cursor(
+            'SELECT question, profile_json, findings_count, quality_score, created_at FROM research_sessions ORDER BY id DESC LIMIT ?',
+            (limit,),
+        ) as cursor:
+            return list(self._row_dict_stream(cursor))
 
     def source_performance_profile(self) -> dict[str, float]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                'SELECT source_type, AVG(usefulness) AS avg_usefulness FROM source_feedback GROUP BY source_type'
-            ).fetchall()
-        return {str(row['source_type']): float(row['avg_usefulness']) for row in rows}
+        with self._streaming_cursor(
+            'SELECT source_type, AVG(usefulness) AS avg_usefulness FROM source_feedback GROUP BY source_type'
+        ) as cursor:
+            return {str(row['source_type']): float(row['avg_usefulness']) for row in self._row_dict_stream(cursor)}
 
     def save_model_state(self, name: str, state: dict[str, Any]) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                '''
-                INSERT INTO model_state(name, state_json, updated_at) VALUES (?, ?, ?)
-                ON CONFLICT(name) DO UPDATE SET state_json=excluded.state_json, updated_at=excluded.updated_at
-                ''',
-                (name, json.dumps(state, ensure_ascii=False), utc_now_iso()),
-            )
+        self._execute_write(
+            '''
+            INSERT INTO model_state(name, state_json, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET state_json=excluded.state_json, updated_at=excluded.updated_at
+            ''',
+            (name, json.dumps(state, ensure_ascii=False), utc_now_iso()),
+        )
 
     def load_model_state(self, name: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            row = conn.execute('SELECT state_json FROM model_state WHERE name = ?', (name,)).fetchone()
+        with self._streaming_cursor('SELECT state_json FROM model_state WHERE name = ?', (name,)) as cursor:
+            row = cursor.fetchone()
         if not row:
             return None
         return read_json_string(str(row['state_json']))
 
     def save_connectivity_event(self, source_type: str, status: str, latency_ms: float, detail: str) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                'INSERT INTO connectivity_events(source_type, status, latency_ms, detail, created_at) VALUES (?, ?, ?, ?, ?)',
-                (source_type, status, float(latency_ms), detail[:500], utc_now_iso()),
-            )
+        self._execute_write(
+            'INSERT INTO connectivity_events(source_type, status, latency_ms, detail, created_at) VALUES (?, ?, ?, ?, ?)',
+            (source_type, status, float(latency_ms), detail[:500], utc_now_iso()),
+        )
 
     def connectivity_profile(self) -> dict[str, dict[str, float]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                '''
-                SELECT source_type,
-                       AVG(CASE WHEN status = 'ok' THEN 1.0 ELSE 0.0 END) AS success_rate,
-                       AVG(latency_ms) AS avg_latency_ms,
-                       COUNT(*) AS total_events
-                FROM connectivity_events
-                GROUP BY source_type
-                '''
-            ).fetchall()
-        return {
-            str(row['source_type']): {
-                'success_rate': float(row['success_rate'] or 0.0),
-                'avg_latency_ms': float(row['avg_latency_ms'] or 0.0),
-                'total_events': float(row['total_events'] or 0.0),
+        with self._streaming_cursor(
+            '''
+            SELECT source_type,
+                   AVG(CASE WHEN status = 'ok' THEN 1.0 ELSE 0.0 END) AS success_rate,
+                   AVG(latency_ms) AS avg_latency_ms,
+                   COUNT(*) AS total_events
+            FROM connectivity_events
+            GROUP BY source_type
+            '''
+        ) as cursor:
+            return {
+                str(row['source_type']): {
+                    'success_rate': float(row['success_rate'] or 0.0),
+                    'avg_latency_ms': float(row['avg_latency_ms'] or 0.0),
+                    'total_events': float(row['total_events'] or 0.0),
+                }
+                for row in self._row_dict_stream(cursor)
             }
-            for row in rows
-        }
 
     def checkpoint_path(self, run_id: str) -> Path:
         return self.checkpoint_dir / f'{run_id}.json'

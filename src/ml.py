@@ -1,6 +1,7 @@
 """Módulo ML dedicado al programa con aprendizaje online y priorización adaptativa."""
 from __future__ import annotations
 
+import importlib.util
 import json
 from dataclasses import dataclass
 from statistics import mean
@@ -33,11 +34,8 @@ class LightweightMLModel:
 
     def _detect_backend(self) -> str:
         for module_name, label in [('tflite_runtime', 'tflite_runtime'), ('tensorflow', 'tensorflow-lite-compatible'), ('torch', 'pytorch-mobile-compatible')]:
-            try:
-                __import__(module_name)
+            if importlib.util.find_spec(module_name) is not None:
                 return label
-            except Exception:
-                continue
         return 'dedicated-online-heuristic'
 
     def _load_or_init_state(self) -> dict[str, Any]:
