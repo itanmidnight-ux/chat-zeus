@@ -1,0 +1,1 @@
+"""Supercomputadora simplificada para Termux."""
