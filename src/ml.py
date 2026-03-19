@@ -1,12 +1,14 @@
 """Módulo ML dedicado al programa con aprendizaje online y priorización adaptativa."""
 from __future__ import annotations
 
-import importlib.util
+import importlib.metadata
 import json
+import os
 from dataclasses import dataclass
 from statistics import mean
 from typing import Any
 
+from src.config import CONFIG
 from src.storage import StorageManager
 from src.utils import clamp
 
@@ -32,10 +34,35 @@ class LightweightMLModel:
         self.backend = self._detect_backend()
         self.state = self._load_or_init_state()
 
+    BACKEND_ENV_VAR = 'CHAT_ZEUS_ML_BACKEND'
+    SAFE_BACKEND_LABELS = {
+        'heuristic': 'dedicated-online-heuristic',
+        'dedicated-online-heuristic': 'dedicated-online-heuristic',
+        'tflite_runtime': 'tflite_runtime',
+        'tensorflow-lite-compatible': 'tensorflow-lite-compatible',
+        'pytorch-mobile-compatible': 'pytorch-mobile-compatible',
+    }
+    DISTRIBUTION_CANDIDATES = (
+        ('tflite-runtime', 'tflite_runtime'),
+        ('tflite_runtime', 'tflite_runtime'),
+        ('tensorflow', 'tensorflow-lite-compatible'),
+        ('torch', 'pytorch-mobile-compatible'),
+    )
+
     def _detect_backend(self) -> str:
-        for module_name, label in [('tflite_runtime', 'tflite_runtime'), ('tensorflow', 'tensorflow-lite-compatible'), ('torch', 'pytorch-mobile-compatible')]:
-            if importlib.util.find_spec(module_name) is not None:
-                return label
+        configured_backend = os.environ.get(self.BACKEND_ENV_VAR, '').strip().lower()
+        if configured_backend:
+            return self.SAFE_BACKEND_LABELS.get(configured_backend, 'dedicated-online-heuristic')
+        if not CONFIG.enable_native_ml_backend_probe:
+            return 'dedicated-online-heuristic'
+        for distribution_name, label in self.DISTRIBUTION_CANDIDATES:
+            try:
+                importlib.metadata.distribution(distribution_name)
+            except importlib.metadata.PackageNotFoundError:
+                continue
+            except Exception:
+                continue
+            return label
         return 'dedicated-online-heuristic'
 
     def _load_or_init_state(self) -> dict[str, Any]:
