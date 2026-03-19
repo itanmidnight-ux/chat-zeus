@@ -1,17 +1,9 @@
-"""Punto de entrada de la aplicación CLI para Linux."""
+"""CLI entrypoint for the autonomous reasoning agent."""
 from __future__ import annotations
 
-from src.chatbot import ChatbotInterface
 from src.autonomous_system import AutonomousReasoningSystem
-from src.agents.memory import MemoryAgent
-from src.calculator import AnalyticalCalculator
+from src.chatbot import ChatbotInterface
 from src.config import CONFIG, ensure_directories
-from src.external import ExternalKnowledgeFetcher
-from src.knowledge import KnowledgeManager
-from src.ml import LightweightMLModel
-from src.optimizer import IterativeOptimizer
-from src.reporting import ReportWriter
-from src.simulation import SimulationEngine
 from src.storage import StorageManager
 from src.termux_ui import TermuxUI
 from src.utils import apply_soft_memory_limit, ensure_environment_defaults, setup_logging
@@ -24,22 +16,9 @@ def build_app() -> ChatbotInterface:
     ensure_directories()
     logger = setup_logging(CONFIG.logs_dir)
     storage = StorageManager(CONFIG.db_path, CONFIG.checkpoint_dir)
-    knowledge = KnowledgeManager(storage)
-    simulation = SimulationEngine(storage, chunk_size=CONFIG.simulation_chunk_size)
-    calculator = AnalyticalCalculator()
-    ml_model = LightweightMLModel(storage)
-    external_fetcher = ExternalKnowledgeFetcher(
-        storage,
-        timeout_sec=CONFIG.internet_timeout_sec,
-        max_queries=CONFIG.max_external_queries,
-        max_retries=CONFIG.internet_max_retries,
-    )
-    optimizer = IterativeOptimizer(simulation, storage)
-    report_writer = ReportWriter(CONFIG.report_dir)
     background_executor = BackgroundExecutor(max_workers=CONFIG.max_workers)
-    memory_agent = MemoryAgent(storage, CONFIG.models_dir / 'autonomous_memory.json')
-    autonomous_system = AutonomousReasoningSystem(storage, memory_agent)
-    return ChatbotInterface(storage, autonomous_system, background_executor, logger, knowledge, simulation, calculator, ml_model, external_fetcher, optimizer, report_writer)
+    autonomous_system = AutonomousReasoningSystem(memory_path=CONFIG.models_dir / 'agent_memory.json')
+    return ChatbotInterface(storage, autonomous_system, background_executor, logger)
 
 
 def main() -> None:
@@ -59,7 +38,6 @@ def main() -> None:
                 continue
             if question.lower() in {'salir', 'exit', 'quit'}:
                 break
-            result = app.safe_answer(question)
-            print(result.get('response_text', 'Sin respuesta disponible.'))
+            print(app.safe_answer(question).get('response_text', ''))
     finally:
         app.background_executor.shutdown()
