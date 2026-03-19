@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -24,6 +25,7 @@ class ResourceBudgetTests(unittest.TestCase):
             request = engine.build_request('cohete de prueba', {'steps': 2000})
             self.assertEqual(request.requested_steps, 2000)
             self.assertLessEqual(request.steps, CONFIG.hard_step_cap)
+            self.assertGreaterEqual(request.chunk_size or 0, 24)
 
 
 class MLBackendSafetyTests(unittest.TestCase):
@@ -45,6 +47,27 @@ class MLBackendSafetyTests(unittest.TestCase):
 
             self.assertEqual(model.backend, 'tflite_runtime')
 
+    def test_model_state_is_persisted_to_json_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            from src.ml import LightweightMLModel
+
+            storage = StorageManager(Path(tmp) / 'knowledge.sqlite3', Path(tmp) / 'checkpoints')
+            model = LightweightMLModel(storage)
+            model.model_state_path = Path(tmp) / CONFIG.ml_checkpoint_file
+            model._persist_state()
+            model.train_from_result({
+                'delta_v_m_s': 100.0,
+                'max_altitude_m': 50.0,
+                'burn_time_s': 3.0,
+                'payload_mass_kg': 10.0,
+                'range_m': 20.0,
+                'chemistry': {'estimated_efficiency': 0.5},
+            })
+            state_path = Path(tmp) / CONFIG.ml_checkpoint_file
+            self.assertTrue(state_path.exists())
+            payload = json.loads(state_path.read_text())
+            self.assertGreaterEqual(payload['samples_seen'], 1)
+
 
 class TermuxUITests(unittest.TestCase):
     def test_render_welcome_mentions_prompt_readiness(self) -> None:
@@ -53,7 +76,7 @@ class TermuxUITests(unittest.TestCase):
         ui = TermuxUI(colors=False)
         welcome = ui.render_welcome()
 
-        self.assertIn('Haz tu pregunta cuando quieras', welcome)
+        self.assertIn('Listo para preguntas en lenguaje natural', welcome)
         self.assertIn('Pregunta >', ui.prompt())
 
 

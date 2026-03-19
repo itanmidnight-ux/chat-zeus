@@ -59,7 +59,7 @@ class ReportWriter:
                 'Resultados y cálculos relevantes:',
                 f"La simulación ligera por tareas pequeñas predice una velocidad final de {simulation['final_velocity_m_s']} m/s y combustible remanente de {simulation['remaining_fuel_kg']} kg.",
                 f"El análisis termoquímico simplificado estima una presión efectiva de cámara de {chemistry.get('effective_pressure_pa', 'n/d')} Pa y un índice térmico de {chemistry.get('thermal_index', 'n/d')}.",
-                f"El perfil de recursos mantuvo chunk_size={simulation.get('resource_profile', {}).get('chunk_size', 'n/d')} y un tope lógico de {simulation.get('resource_profile', {}).get('max_memory_mb', 'n/d')} MB por tarea.",
+                f"El perfil de recursos mantuvo chunk_size={simulation.get('resource_profile', {}).get('chunk_size', 'n/d')}, un tope lógico de {simulation.get('resource_profile', {}).get('max_memory_mb', 'n/d')} MB por tarea y presupuesto de CPU={simulation.get('resource_profile', {}).get('cpu_budget', 'n/d')}.",
                 '',
             ])
         lines.extend([

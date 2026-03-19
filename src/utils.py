@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.config import CONFIG
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -82,15 +84,21 @@ def soft_memory_limit_bytes(megabytes: int) -> int:
     return max(32, megabytes) * 1024 * 1024
 
 
+def recommended_math_threads(max_workers: int | None = None) -> int:
+    workers = max_workers or CONFIG.max_workers
+    return str(max(1, min(4, workers))).strip()
+
+
 def ensure_environment_defaults() -> None:
+    math_threads = recommended_math_threads(CONFIG.max_workers)
     os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
     os.environ.setdefault('PYTHONUNBUFFERED', '1')
-    os.environ.setdefault('OMP_NUM_THREADS', '1')
-    os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
-    os.environ.setdefault('MKL_NUM_THREADS', '1')
-    os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
-    os.environ.setdefault('VECLIB_MAXIMUM_THREADS', '1')
-    os.environ.setdefault('BLIS_NUM_THREADS', '1')
+    os.environ.setdefault('OMP_NUM_THREADS', math_threads)
+    os.environ.setdefault('OPENBLAS_NUM_THREADS', math_threads)
+    os.environ.setdefault('MKL_NUM_THREADS', math_threads)
+    os.environ.setdefault('NUMEXPR_NUM_THREADS', math_threads)
+    os.environ.setdefault('VECLIB_MAXIMUM_THREADS', math_threads)
+    os.environ.setdefault('BLIS_NUM_THREADS', math_threads)
     os.environ.setdefault('MALLOC_ARENA_MAX', '2')
 
 
@@ -110,9 +118,17 @@ def apply_soft_memory_limit(megabytes: int) -> None:
 def estimate_step_budget(requested_steps: int, chunk_size: int, memory_mb: int, max_cap: int) -> int:
     requested = max(chunk_size, int(requested_steps))
     logical_cap = max(chunk_size, int(max_cap))
-    memory_factor = max(1, memory_mb // 96)
-    safe_budget = max(chunk_size, min(logical_cap, chunk_size * memory_factor * 3))
+    memory_factor = max(1, memory_mb // 128)
+    safe_budget = max(chunk_size, min(logical_cap, chunk_size * memory_factor * 4))
     return max(chunk_size, min(requested, safe_budget, logical_cap))
+
+
+def adaptive_chunk_size(requested_steps: int, memory_mb: int, cpu_count: int, base_chunk_size: int) -> int:
+    memory_factor = max(1, memory_mb // 256)
+    cpu_factor = max(1, min(cpu_count, 8))
+    dynamic = base_chunk_size * min(6, memory_factor + cpu_factor // 2)
+    safe_dynamic = max(base_chunk_size, min(dynamic, max(base_chunk_size * 8, requested_steps // 4 or base_chunk_size)))
+    return max(base_chunk_size, safe_dynamic)
 
 
 def detect_linker_memory_issue(exc: BaseException) -> bool:

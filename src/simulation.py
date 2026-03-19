@@ -9,7 +9,7 @@ from typing import Any
 
 from src.config import CONFIG
 from src.storage import StorageManager
-from src.utils import clamp, estimate_step_budget
+from src.utils import adaptive_chunk_size, clamp, estimate_step_budget
 
 
 @dataclass
@@ -30,14 +30,15 @@ class SimulationRequest:
     steps: int
     requested_steps: int | None = None
     run_id: str | None = None
+    chunk_size: int | None = None
 
 
 class SimulationEngine:
     def __init__(self, storage: StorageManager, chunk_size: int = 100):
         self.storage = storage
-        self.chunk_size = max(8, chunk_size)
+        self.chunk_size = max(16, chunk_size)
         self.max_memory_bytes = CONFIG.max_task_memory_mb * 1024 * 1024
-        self.max_history_entries = max(8, min(CONFIG.max_checkpoint_history, self.chunk_size * 2))
+        self.max_history_entries = max(12, min(CONFIG.max_checkpoint_history, self.chunk_size * 2))
 
     def build_request(self, question: str, defaults: dict[str, float | int] | None = None) -> SimulationRequest:
         defaults = defaults or {}
@@ -47,6 +48,12 @@ class SimulationEngine:
             chunk_size=self.chunk_size,
             memory_mb=CONFIG.max_task_memory_mb,
             max_cap=CONFIG.hard_step_cap,
+        )
+        chunk_size = adaptive_chunk_size(
+            requested_steps=safe_steps,
+            memory_mb=CONFIG.max_task_memory_mb,
+            cpu_count=CONFIG.runtime_profile.cpu_count,
+            base_chunk_size=self.chunk_size,
         )
         return SimulationRequest(
             question=question,
@@ -65,6 +72,7 @@ class SimulationEngine:
             steps=safe_steps,
             requested_steps=requested_steps,
             run_id=str(defaults.get('run_id')) if defaults.get('run_id') else None,
+            chunk_size=chunk_size,
         )
 
     def _thermo_snapshot(self, request: SimulationRequest) -> dict[str, float]:
@@ -82,6 +90,8 @@ class SimulationEngine:
 
     def run(self, request: SimulationRequest, progress_callback=None) -> dict[str, Any]:
         run_id = request.run_id or uuid.uuid4().hex[:12]
+        chunk_size = max(self.chunk_size, int(request.chunk_size or self.chunk_size))
+        max_history_entries = max(12, min(CONFIG.max_checkpoint_history, chunk_size * 2))
         checkpoint = self.storage.load_checkpoint(run_id)
         start_step = int(checkpoint.get('step', 0))
         velocity = float(checkpoint.get('velocity', 0.0))
@@ -89,7 +99,7 @@ class SimulationEngine:
         downrange = float(checkpoint.get('downrange', 0.0))
         remaining_fuel = float(checkpoint.get('remaining_fuel', request.fuel_mass_kg))
         max_altitude = float(checkpoint.get('max_altitude', altitude))
-        history = list(checkpoint.get('history', []))[-self.max_history_entries:]
+        history = list(checkpoint.get('history', []))[-max_history_entries:]
         thermo = checkpoint.get('thermo') or self._thermo_snapshot(request)
 
         completed_steps = int(checkpoint.get('step', checkpoint.get('completed_steps', 0)))
@@ -102,9 +112,10 @@ class SimulationEngine:
         total_initial_mass = request.payload_mass_kg + request.dry_mass_kg + request.fuel_mass_kg
         final_mass = request.payload_mass_kg + request.dry_mass_kg
         delta_v = request.exhaust_velocity_m_s * math.log(max(total_initial_mass / max(final_mass, 1e-6), 1.000001))
+        checkpoint_stride = max(1, chunk_size // 3)
 
-        for chunk_start in range(start_step, request.steps, self.chunk_size):
-            chunk_end = min(chunk_start + self.chunk_size, request.steps)
+        for chunk_start in range(start_step, request.steps, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, request.steps)
             for step in range(chunk_start, chunk_end):
                 current_mass = request.payload_mass_kg + request.dry_mass_kg + max(remaining_fuel, 0.0)
                 burn = min(remaining_fuel, burn_rate * request.time_step_s)
@@ -120,14 +131,14 @@ class SimulationEngine:
                 altitude = max(0.0, altitude + velocity * request.time_step_s)
                 downrange += max(velocity, 0.0) * request.time_step_s * 0.12
                 max_altitude = max(max_altitude, altitude)
-                if step % max(1, self.chunk_size // 3) == 0:
+                if step % checkpoint_stride == 0 or step + 1 == chunk_end:
                     history.append({
                         'step': step,
                         'altitude_m': round(altitude, 3),
                         'velocity_m_s': round(velocity, 3),
                         'dynamic_pressure_pa': round(dynamic_pressure, 3),
                     })
-                    history = history[-self.max_history_entries:]
+                    history = history[-max_history_entries:]
 
             payload = {
                 'run_id': run_id,
@@ -137,7 +148,7 @@ class SimulationEngine:
                 'downrange': downrange,
                 'remaining_fuel': remaining_fuel,
                 'max_altitude': max_altitude,
-                'history': history[-self.max_history_entries:],
+                'history': history[-max_history_entries:],
                 'thermo': thermo,
                 'request': asdict(request),
             }
@@ -165,15 +176,16 @@ class SimulationEngine:
                 **thermo,
             },
             'resource_profile': {
-                'chunk_size': self.chunk_size,
+                'chunk_size': chunk_size,
                 'max_memory_mb': CONFIG.max_task_memory_mb,
                 'requested_steps': int(request.requested_steps or request.steps),
                 'effective_steps': request.steps,
                 'steps_trimmed': int(request.requested_steps or request.steps) != request.steps,
-                'estimated_history_bytes': len(json.dumps(history[-self.max_history_entries:], ensure_ascii=False).encode('utf-8')),
+                'estimated_history_bytes': len(json.dumps(history[-max_history_entries:], ensure_ascii=False).encode('utf-8')),
                 'resumed_from_checkpoint': start_step > 0,
+                'cpu_budget': CONFIG.runtime_profile.cpu_count,
             },
-            'history': history[-min(12, self.max_history_entries):],
+            'history': history[-min(12, max_history_entries):],
         }
         self.storage.save_run_state(run_id, request.question, 'completed', 1.0, json.dumps(result, ensure_ascii=False))
         self.storage.save_checkpoint(run_id, result)

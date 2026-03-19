@@ -1,4 +1,4 @@
-"""Punto de entrada de la aplicación CLI para Termux."""
+"""Punto de entrada de la aplicación CLI para Linux."""
 from __future__ import annotations
 
 from src.chatbot import ChatbotInterface
@@ -26,7 +26,12 @@ def build_app() -> ChatbotInterface:
     simulation = SimulationEngine(storage, chunk_size=CONFIG.simulation_chunk_size)
     calculator = AnalyticalCalculator()
     ml_model = LightweightMLModel(storage)
-    external_fetcher = ExternalKnowledgeFetcher(storage, timeout_sec=CONFIG.internet_timeout_sec, max_queries=CONFIG.max_external_queries, max_retries=CONFIG.internet_max_retries)
+    external_fetcher = ExternalKnowledgeFetcher(
+        storage,
+        timeout_sec=CONFIG.internet_timeout_sec,
+        max_queries=CONFIG.max_external_queries,
+        max_retries=CONFIG.internet_max_retries,
+    )
     optimizer = IterativeOptimizer(simulation, storage)
     report_writer = ReportWriter(CONFIG.report_dir)
     background_executor = BackgroundExecutor(max_workers=CONFIG.max_workers)

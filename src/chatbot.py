@@ -169,7 +169,7 @@ class ChatbotInterface:
             'estimaciones básicas de gravedad, arrastre, propulsión y termodinámica, además de una capa de aprendizaje incremental con checkpoints persistentes. '
             'La consulta activó una investigación web multi-fuente con planificación por dominios, evaluación de evidencia, detección básica de contradicciones, conectividad reforzada con reintentos y priorización adaptativa de fuentes.'
             f' Resumen RAG: {knowledge_summary}.{context_hint}'
-            ' El proceso se ejecutó en bloques pequeños para respetar límites de memoria de Termux.'
+            ' El proceso se ejecutó en bloques pequeños para aprovechar CPU y RAM de Linux sin perder estabilidad.'
             f" La investigación complementaria aportó una señal de factibilidad aproximada de {synthesis.get('feasibility_signal', 0.0)} y una calidad media de evidencia de {synthesis.get('quality_score', 0.0)}."
         )
         if simulation.get('mode') == 'general_analysis':
@@ -296,7 +296,7 @@ class ChatbotInterface:
 
         optimization = None
         if profile['requires_simulation'] and profile['optimization_requested']:
-            optimization_future = self.background_executor.submit(self.optimizer.optimize, question, 8, self._progress)
+            optimization_future = self.background_executor.submit(self.optimizer.optimize, question, CONFIG.optimizer_iterations, self._progress)
             optimization = optimization_future.result()
 
         try:
