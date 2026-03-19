@@ -1,6 +1,7 @@
 """Interfaz textual ligera y silenciosa optimizada para Termux."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 
@@ -14,8 +15,16 @@ class TermuxPalette:
 
 
 class TermuxUI:
-    def __init__(self, colors: bool = True):
+    def __init__(self, colors: bool | None = None):
+        if colors is None:
+            colors = self._supports_color()
         self.palette = TermuxPalette() if colors else TermuxPalette('', '', '', '', '')
+
+    def _supports_color(self) -> bool:
+        if os.environ.get('NO_COLOR'):
+            return False
+        term = os.environ.get('TERM', '').lower()
+        return bool(term) and term != 'dumb'
 
     def prompt(self) -> str:
         p = self.palette
@@ -25,7 +34,7 @@ class TermuxUI:
         p = self.palette
         return (
             f"{p.bold}{p.accent}Chat Zeus Termux{p.reset}\n"
-            f"{p.subtle}Escribe tu consulta científica y presiona Enter. Usa 'salir' para terminar.{p.reset}"
+            f"{p.subtle}Consulta científica, técnica o general. Usa parámetros como payload=120 thrust=18000 y escribe 'salir' para terminar.{p.reset}"
         )
 
     def render_response(self, text: str) -> str:
