@@ -53,7 +53,7 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
    python3 main.py
    ```
 
-> El proyecto funciona sin dependencias pesadas adicionales. Si instalas librerías extra, el sistema las detecta sin exigir cambios en el código.
+> El proyecto funciona sin dependencias pesadas adicionales. En Termux, por seguridad el backend ML nativo **no se autodetecta** al arrancar para evitar abortos del linker; si realmente quieres forzarlo, usa `CHAT_ZEUS_ML_BACKEND=tflite_runtime` o habilita el sondeo explícito con `CHAT_ZEUS_ENABLE_NATIVE_ML_BACKEND_PROBE=1`.
 
 ## Uso
 
