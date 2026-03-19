@@ -9,7 +9,7 @@ from typing import Any
 
 from src.config import CONFIG
 from src.storage import StorageManager
-from src.utils import clamp
+from src.utils import clamp, estimate_step_budget
 
 
 @dataclass
@@ -28,6 +28,7 @@ class SimulationRequest:
     mixture_ratio: float
     time_step_s: float
     steps: int
+    requested_steps: int | None = None
     run_id: str | None = None
 
 
@@ -40,6 +41,13 @@ class SimulationEngine:
 
     def build_request(self, question: str, defaults: dict[str, float | int] | None = None) -> SimulationRequest:
         defaults = defaults or {}
+        requested_steps = int(defaults.get('steps', CONFIG.default_steps))
+        safe_steps = estimate_step_budget(
+            requested_steps=requested_steps,
+            chunk_size=self.chunk_size,
+            memory_mb=CONFIG.max_task_memory_mb,
+            max_cap=CONFIG.hard_step_cap,
+        )
         return SimulationRequest(
             question=question,
             payload_mass_kg=float(defaults.get('payload_mass_kg', 120.0)),
@@ -54,7 +62,8 @@ class SimulationEngine:
             pressure_pa=float(defaults.get('pressure_pa', 101325.0)),
             mixture_ratio=float(defaults.get('mixture_ratio', 2.6)),
             time_step_s=float(defaults.get('time_step_s', 0.2)),
-            steps=int(defaults.get('steps', CONFIG.default_steps)),
+            steps=safe_steps,
+            requested_steps=requested_steps,
             run_id=str(defaults.get('run_id')) if defaults.get('run_id') else None,
         )
 
@@ -158,6 +167,9 @@ class SimulationEngine:
             'resource_profile': {
                 'chunk_size': self.chunk_size,
                 'max_memory_mb': CONFIG.max_task_memory_mb,
+                'requested_steps': int(request.requested_steps or request.steps),
+                'effective_steps': request.steps,
+                'steps_trimmed': int(request.requested_steps or request.steps) != request.steps,
                 'estimated_history_bytes': len(json.dumps(history[-self.max_history_entries:], ensure_ascii=False).encode('utf-8')),
                 'resumed_from_checkpoint': start_step > 0,
             },

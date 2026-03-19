@@ -107,6 +107,14 @@ def apply_soft_memory_limit(megabytes: int) -> None:
         resource.setrlimit(resource.RLIMIT_AS, (target_soft, target_hard))
 
 
+def estimate_step_budget(requested_steps: int, chunk_size: int, memory_mb: int, max_cap: int) -> int:
+    requested = max(chunk_size, int(requested_steps))
+    logical_cap = max(chunk_size, int(max_cap))
+    memory_factor = max(1, memory_mb // 96)
+    safe_budget = max(chunk_size, min(logical_cap, chunk_size * memory_factor * 3))
+    return max(chunk_size, min(requested, safe_budget, logical_cap))
+
+
 def detect_linker_memory_issue(exc: BaseException) -> bool:
     message = safe_error_message(exc)
     markers = [

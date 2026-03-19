@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.config import CONFIG
 from src.utils import read_json, utc_now_iso, write_json
 
 
@@ -351,6 +352,18 @@ class StorageManager:
 
     def save_checkpoint(self, run_id: str, payload: dict[str, Any]) -> None:
         write_json(self.checkpoint_path(run_id), payload)
+        self._prune_checkpoint_family(run_id)
+
+    def _prune_checkpoint_family(self, run_id: str) -> None:
+        prefix = run_id.split('_', 1)[0]
+        retained = max(4, int(CONFIG.checkpoint_retention_per_prefix))
+        candidates = sorted(
+            self.checkpoint_dir.glob(f'{prefix}_*.json'),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for stale in candidates[retained:]:
+            stale.unlink(missing_ok=True)
 
 
 def read_json_string(payload: str) -> dict[str, Any]:

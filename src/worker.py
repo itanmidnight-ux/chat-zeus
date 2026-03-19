@@ -22,6 +22,11 @@ class BackgroundExecutor:
         except RuntimeError:
             self._semaphore.release()
             return self._run_inline(fn, *args, **kwargs)
+        except OSError as exc:
+            self._semaphore.release()
+            if 'cannot allocate memory' in str(exc).lower():
+                return self._run_inline(fn, *args, **kwargs)
+            raise
 
     def _run_inline(self, fn: Callable[..., Any], *args, **kwargs) -> Future:
         fallback_future: Future = Future()

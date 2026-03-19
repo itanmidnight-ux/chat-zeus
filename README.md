@@ -13,6 +13,7 @@ Sistema modular en Python 3 para Android/Termux que actúa como una **supercompu
 - **ML dedicado y adaptable**: aprendizaje online específico del programa, con pesos propios, memoria persistente, priorización de fuentes, intensidad de investigación por consulta y posibilidad de ampliar con TensorFlow Lite o PyTorch.
 - **Optimización iterativa**: muestreo ligero con checkpoints, apto para procesos largos en Termux.
 - **Tolerancia a errores**: intenta continuar ante datos faltantes, archivos JSON corruptos, `MemoryError` y saturación del linker de Android (`create_new_page ... MAP_FAILED`).
+- **Presupuesto automático de recursos**: recorta de forma preventiva el número de pasos de simulación, mantiene pocos workers, poda checkpoints antiguos por familia y degrada a respuesta analítica silenciosa cuando detecta presión de memoria.
 - **Modo degradado con respuesta útil**: si una integración secundaria falla o la investigación externa agota el tiempo presupuestado, el sistema evita el mensaje genérico y entrega una respuesta completa basada en conocimiento local, heurísticas y el contexto reciente.
 - **Segundo plano silencioso**: simulación, optimización y búsqueda externa se despachan mediante un ejecutor de fondo y la terminal sigue mostrando solo la respuesta final.
 - **Conectividad reforzada**: las búsquedas externas registran latencia, reintentos, tasa de éxito y salud por fuente para endurecer el acceso a internet a lo largo del tiempo.
@@ -103,6 +104,8 @@ Cada simulación y optimización escribe:
 - un checkpoint JSON incremental en `data/data/checkpoints/`,
 - un estado resumido en SQLite,
 - y un reporte final en `data/data/reports/`, incluyendo trazas resumidas de las búsquedas web relevantes.
+
+Además, el sistema conserva solo un subconjunto reciente de checkpoints por familia (`sim_*`, `opt_*`, etc.) para no llenar almacenamiento en ejecuciones largas dentro de Termux.
 
 Si interrumpes Termux y repites la misma consulta, el `run_id` estable permite reusar el progreso guardado.
 
