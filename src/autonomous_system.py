@@ -215,6 +215,7 @@ class AutonomousReasoningSystem:
     def process(self, question: str) -> AutonomousResult:
         started = time.perf_counter()
         cleaned = clean_input(question)
+        cognitive_result = self.cognitive_system.process(cleaned)
         understanding = self.understanding.analyze(cleaned)
         self.session_context.update_from_understanding(understanding)
         context = self.session_context.recall(cleaned)
